@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CryptoVault — Admin Panel</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+<!-- Login Screen -->
+<div id="login-screen">
+  <div class="login-card">
+    <div class="logo"><span class="logo-icon">◈</span> CryptoVault Admin</div>
+    <h1>Admin Access</h1>
+    <p class="login-sub">Enter your backend URL and admin secret to continue.</p>
+
+    <div class="field">
+      <label>Backend URL</label>
+      <input id="inp-url" type="text" placeholder="https://your-backend.vercel.app" />
+    </div>
+    <div class="field">
+      <label>Admin Secret</label>
+      <input id="inp-secret" type="password" placeholder="••••••••••••" />
+    </div>
+    <div id="login-err" class="alert alert-error hidden"></div>
+    <button class="btn-primary" id="login-btn" onclick="doLogin()">Access Dashboard</button>
+  </div>
+</div>
+
+<!-- Dashboard -->
+<div id="dashboard" class="hidden">
+  <header>
+    <div class="logo"><span class="logo-icon">◈</span> CryptoVault Admin</div>
+    <div class="header-right">
+      <nav class="tabs">
+        <button class="tab active" id="tab-btn-users" onclick="switchTab('users', this)">👥 Users</button>
+        <button class="tab" id="tab-btn-withdrawals" onclick="switchTab('withdrawals', this)">💸 Withdrawals</button>
+      </nav>
+      <button class="btn-logout" onclick="doLogout()">Logout</button>
+    </div>
+  </header>
+
+  <!-- Users Tab -->
+  <div id="tab-users" class="tab-pane">
+    <div class="pane-header">
+      <div>
+        <h2>Users</h2>
+        <p class="pane-sub">Manage investor accounts, balances, and withdrawal permissions</p>
+      </div>
+      <button class="btn-refresh" onclick="loadUsers()">⟳ Refresh</button>
+    </div>
+    <div id="users-state" class="state-msg">Loading users…</div>
+    <div id="users-wrap" class="hidden">
+      <table>
+        <thead>
+          <tr>
+            <th>Investor</th>
+            <th>Balance (USD)</th>
+            <th>Profit (USD)</th>
+            <th>Plan</th>
+            <th>Lock Until</th>
+            <th>Tax %</th>
+            <th>Withdrawal</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="users-body"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Withdrawals Tab -->
+  <div id="tab-withdrawals" class="tab-pane hidden">
+    <div class="pane-header">
+      <div>
+        <h2>Withdrawal Requests</h2>
+        <p class="pane-sub">Review and process investor withdrawal requests</p>
+      </div>
+      <button class="btn-refresh" onclick="loadWithdrawals()">⟳ Refresh</button>
+    </div>
+    <div id="withdrawals-state" class="state-msg">Loading requests…</div>
+    <div id="withdrawals-wrap" class="hidden">
+      <table>
+        <thead>
+          <tr>
+            <th>Investor</th>
+            <th>Amount (USD)</th>
+            <th>Wallet Address</th>
+            <th>Requested</th>
+            <th>Status</th>
+            <th>Action</th>
+          </tr>
+        </thead>
+        <tbody id="withdrawals-body"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- Edit Modal -->
+<div id="modal" class="modal-overlay hidden" onclick="handleOverlayClick(event)">
+  <div class="modal-box">
+    <div class="modal-header">
+      <h3 id="modal-title">Edit</h3>
+      <button class="modal-close" onclick="closeModal()">✕</button>
+    </div>
+    <div id="modal-body"></div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
