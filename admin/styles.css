@@ -157,6 +157,16 @@ td { padding: 13px 20px; font-size: 13px; vertical-align: middle; }
 }
 .btn-act-edit { background: rgba(139,92,246,0.08); color: #a78bfa; border-color: rgba(139,92,246,0.2); }
 .btn-act-edit:hover { background: rgba(139,92,246,0.18); }
+.btn-act-fee {
+  background: linear-gradient(135deg, rgba(109,40,217,0.35), rgba(14,165,233,0.25)) !important;
+  color: #c4b5fd !important;
+  border-color: #8b5cf6 !important;
+  font-weight: 700 !important;
+}
+.btn-act-fee:hover {
+  background: linear-gradient(135deg, rgba(109,40,217,0.6), rgba(14,165,233,0.45)) !important;
+  box-shadow: 0 0 10px rgba(139,92,246,0.4);
+}
 .btn-act-approve { background: rgba(16,185,129,0.08); color: #34d399; border-color: rgba(16,185,129,0.2); }
 .btn-act-approve:hover { background: rgba(16,185,129,0.18); }
 .btn-act-danger { background: rgba(239,68,68,0.08); color: #f87171; border-color: rgba(239,68,68,0.2); }
@@ -171,7 +181,7 @@ td { padding: 13px 20px; font-size: 13px; vertical-align: middle; }
 }
 
 .modal-box {
-  width: 100%; max-width: 440px;
+  width: 100%; max-width: 540px; max-height: 90vh; overflow-y: auto;
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: 20px; padding: 32px;
@@ -193,20 +203,69 @@ td { padding: 13px 20px; font-size: 13px; vertical-align: middle; }
 
 .modal-hint { font-size: 12px; color: var(--text-muted); margin-bottom: 16px; line-height: 1.5; }
 
-/* ── Forms ───────────────────────────────────────────────── */
+/* ── Forms & Inputs ───────────────────────────────────────── */
 
 .field { display: flex; flex-direction: column; gap: 7px; margin-bottom: 16px; }
 .field label { font-size: 13px; font-weight: 500; color: var(--text-dim); }
 
-input[type="text"], input[type="password"], input[type="number"], input[type="date"] {
+input[type="text"], input[type="password"], input[type="number"], input[type="date"], select, textarea {
   background: rgba(255,255,255,0.04);
   border: 1px solid var(--border);
   border-radius: var(--r-sm); padding: 12px 15px;
   color: var(--text); font-size: 14px; font-family: inherit;
   outline: none; transition: border-color 0.2s, background 0.2s; width: 100%;
 }
-input:focus { border-color: var(--accent-b); background: rgba(109,40,217,0.06); }
-input::placeholder { color: var(--text-muted); }
+select { cursor: pointer; }
+select option { background: #141528; color: #ecedf5; }
+textarea { resize: vertical; min-height: 75px; line-height: 1.4; }
+input:focus, select:focus, textarea:focus { border-color: var(--accent-b); background: rgba(109,40,217,0.06); }
+input::placeholder, textarea::placeholder { color: var(--text-muted); }
+
+/* Presets Container */
+.presets-grid {
+  display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px;
+}
+.preset-chip {
+  background: rgba(255,255,255,0.06); border: 1px solid var(--border);
+  color: var(--text-dim); padding: 5px 10px; border-radius: 6px;
+  font-size: 11px; font-weight: 500; cursor: pointer; transition: all 0.15s;
+}
+.preset-chip:hover { background: rgba(139,92,246,0.15); border-color: var(--accent-b); color: #fff; }
+.preset-chip.active { background: rgba(139,92,246,0.25); border-color: #a78bfa; color: #c4b5fd; font-weight: 600; }
+
+/* Summary Info Box in Modal */
+.modal-info-box {
+  background: rgba(255,255,255,0.03); border: 1px solid var(--border);
+  border-radius: 10px; padding: 14px 16px; margin-bottom: 18px;
+  display: flex; flex-direction: column; gap: 8px; font-size: 13px;
+}
+.modal-info-row { display: flex; justify-content: space-between; align-items: center; }
+.modal-info-label { color: var(--text-muted); }
+.modal-info-val { font-weight: 600; color: var(--text); }
+.modal-info-val.highlight { color: #10b981; font-size: 14px; }
+
+/* Checkbox Toggle Container */
+.toggle-field {
+  display: flex; align-items: center; gap: 10px;
+  background: rgba(255,255,255,0.03); border: 1px solid var(--border);
+  border-radius: 8px; padding: 12px 14px; margin-bottom: 16px; cursor: pointer;
+}
+.toggle-field input[type="checkbox"] {
+  width: 18px; height: 18px; accent-color: var(--accent-b); cursor: pointer;
+}
+
+/* Modal Button Actions */
+.modal-actions {
+  display: flex; gap: 10px; margin-top: 20px;
+}
+.modal-actions .btn-primary { flex: 2; }
+.modal-actions .btn-secondary {
+  flex: 1; background: rgba(255,255,255,0.06); border: 1px solid var(--border);
+  color: var(--text-dim); border-radius: var(--r-sm); padding: 12px 14px;
+  font-size: 13px; font-weight: 500; cursor: pointer; transition: all 0.2s; font-family: inherit;
+}
+.modal-actions .btn-secondary:hover { background: rgba(255,255,255,0.1); color: var(--text); }
+
 
 /* ── Buttons ─────────────────────────────────────────────── */
 
@@ -238,6 +297,47 @@ input::placeholder { color: var(--text-muted); }
 /* ── Alerts ──────────────────────────────────────────────── */
 
 .alert { padding: 12px 15px; border-radius: 8px; font-size: 13px; line-height: 1.5; margin-bottom: 14px; }
-.alert-error { background: rgba(239,68,68,0.08); border: 1px solid rgba(239,68,68,0.2); color: #fca5a5; }
+.alert-error   { background: rgba(239,68,68,0.08);  border: 1px solid rgba(239,68,68,0.2);  color: #fca5a5; }
+.alert-success { background: rgba(16,185,129,0.08); border: 1px solid rgba(16,185,129,0.2); color: #6ee7b7; }
 
 .state-msg { color: var(--text-muted); padding: 48px; text-align: center; }
+
+/* ── Settings Tab ─────────────────────────────────────────── */
+
+.settings-section {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 24px 28px;
+  margin-bottom: 20px;
+}
+
+.settings-section-title {
+  font-size: 16px;
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+
+.settings-desc {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-bottom: 20px;
+  line-height: 1.5;
+}
+
+.settings-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+@media (max-width: 640px) {
+  .settings-grid { grid-template-columns: 1fr; }
+}
+
+/* Badge for pending investment status */
+.badge-pending {
+  background: rgba(245,158,11,0.1);
+  color: #fbbf24;
+  border: 1px solid rgba(245,158,11,0.2);
+}

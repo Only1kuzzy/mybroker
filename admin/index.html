@@ -6,7 +6,7 @@
   <title>CryptoVault — Admin Panel</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="styles.css?v=2.0.0" />
 </head>
 <body>
 
@@ -19,7 +19,7 @@
 
     <div class="field">
       <label>Backend URL</label>
-      <input id="inp-url" type="text" placeholder="https://your-backend.vercel.app" />
+      <input id="inp-url" type="text" placeholder="http://localhost:4000" />
     </div>
     <div class="field">
       <label>Admin Secret</label>
@@ -38,6 +38,7 @@
       <nav class="tabs">
         <button class="tab active" id="tab-btn-users" onclick="switchTab('users', this)">👥 Users</button>
         <button class="tab" id="tab-btn-withdrawals" onclick="switchTab('withdrawals', this)">💸 Withdrawals</button>
+        <button class="tab" id="tab-btn-settings" onclick="switchTab('settings', this)">⚙️ Payment Settings</button>
       </nav>
       <button class="btn-logout" onclick="doLogout()">Logout</button>
     </div>
@@ -61,8 +62,13 @@
             <th>Balance (USD)</th>
             <th>Profit (USD)</th>
             <th>Plan</th>
-            <th>Lock Until</th>
+            <th>Inv. Amount</th>
+            <th>Payment</th>
+            <th>Inv. Status</th>
             <th>Tax %</th>
+            <th>Fee Req.</th>
+            <th>Fee Paid</th>
+            <th>Fee Rem.</th>
             <th>Withdrawal</th>
             <th>Actions</th>
           </tr>
@@ -98,6 +104,79 @@
       </table>
     </div>
   </div>
+
+  <!-- Settings Tab -->
+  <div id="tab-settings" class="tab-pane hidden">
+    <div class="pane-header">
+      <div>
+        <h2>Payment Settings</h2>
+        <p class="pane-sub">Configure the wallet address and bank details shown to investors during deposit</p>
+      </div>
+      <button class="btn-refresh" onclick="loadSettings()">⟳ Refresh</button>
+    </div>
+    <div id="settings-state" class="state-msg">Loading settings…</div>
+    <div id="settings-wrap" class="hidden">
+
+      <!-- Withdrawal Fee Section -->
+      <div class="settings-section">
+        <div class="settings-section-title">💳 Withdrawal Processing Fee</div>
+        <p class="settings-desc">Set the fixed dollar amount users must pay before they can withdraw their funds. Set to 0 to disable the fee gate.</p>
+        <div class="settings-grid">
+          <div class="field">
+            <label>Withdrawal Fee (USD) — Fixed Amount</label>
+            <input type="number" id="s-withdrawal-fee" placeholder="e.g. 500" min="0" step="0.01" />
+          </div>
+        </div>
+      </div>
+
+      <!-- Crypto Section -->
+      <div class="settings-section">
+        <div class="settings-section-title">₿ Cryptocurrency Wallet</div>
+        <p class="settings-desc">Investors who choose crypto payment will see this wallet address and send funds here.</p>
+        <div class="settings-grid">
+          <div class="field">
+            <label>Network / Coin (e.g. Bitcoin (BTC), Ethereum (ETH), USDT TRC20)</label>
+            <input type="text" id="s-crypto-network" placeholder="Bitcoin (BTC)" />
+          </div>
+          <div class="field">
+            <label>Wallet Address</label>
+            <input type="text" id="s-crypto-wallet" placeholder="e.g. 1A1zP1eP5QGefi2DMPTfTL5SLmv7Divf Na" />
+          </div>
+        </div>
+      </div>
+
+      <!-- Bank Section -->
+      <div class="settings-section">
+        <div class="settings-section-title">🏦 Bank Transfer Details</div>
+        <p class="settings-desc">Investors who choose bank transfer will see these details and wire funds to this account.</p>
+        <div class="settings-grid">
+          <div class="field">
+            <label>Bank Name</label>
+            <input type="text" id="s-bank-name" placeholder="e.g. Chase Bank" />
+          </div>
+          <div class="field">
+            <label>Account Holder Name</label>
+            <input type="text" id="s-bank-account-name" placeholder="e.g. CryptoVault Ltd" />
+          </div>
+          <div class="field">
+            <label>Account Number / IBAN</label>
+            <input type="text" id="s-bank-account-number" placeholder="e.g. GB29 NWBK 6016 1331 9268 19" />
+          </div>
+          <div class="field">
+            <label>Routing Number (US only — leave blank if not applicable)</label>
+            <input type="text" id="s-bank-routing" placeholder="e.g. 021000021" />
+          </div>
+          <div class="field">
+            <label>SWIFT / BIC Code (international)</label>
+            <input type="text" id="s-bank-swift" placeholder="e.g. CHASUS33" />
+          </div>
+        </div>
+      </div>
+
+      <div id="settings-alert" class="hidden" style="margin-bottom:16px;"></div>
+      <button class="btn-primary" onclick="saveSettings()">💾 Save Payment Settings</button>
+    </div>
+  </div>
 </div>
 
 <!-- Edit Modal -->
@@ -111,6 +190,6 @@
   </div>
 </div>
 
-<script src="app.js"></script>
+<script src="app.js?v=2.0.0"></script>
 </body>
 </html>
