@@ -28,10 +28,12 @@ app.use('/admin', express.static(adminPath));
 const PORT = process.env.PORT ? Number(process.env.PORT) : 4000;
 
 function db() {
-  return createClient(
-    process.env.SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!
-  );
+  const url = process.env.SUPABASE_URL?.trim();
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
+  if (!url || !key) {
+    throw new Error('Supabase credentials missing: please set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in environment variables.');
+  }
+  return createClient(url, key);
 }
 
 const JWT_SECRET = process.env.JWT_SECRET || 'change-me-in-production';
@@ -61,63 +63,78 @@ function adminMiddleware(req: any, res: any, next: any) {
 }
 
 // ─── Auth ──────────────────────────────────────────────────────────────────
-
+ 
 app.post('/auth/register', async (req, res) => {
-  const { email, fullName, password } = req.body;
-  if (!email || !fullName || !password) {
-    return res.status(400).json({ error: 'Email, full name and password are required' });
+  try {
+    const { email, fullName, password } = req.body;
+    if (!email || !fullName || !password) {
+      return res.status(400).json({ error: 'Email, full name and password are required' });
+    }
+
+    const supabase = db();
+
+    const { data: existing } = await supabase
+      .from('users')
+      .select('id')
+      .eq('email', email.toLowerCase())
+      .maybeSingle();
+
+    if (existing) {
+      return res.status(409).json({ error: 'An account with this email already exists' });
+    }
+
+    const passwordHash = await bcrypt.hash(password, 12);
+
+    const { data: user, error } = await supabase
+      .from('users')
+      .insert({ email: email.toLowerCase(), full_name: fullName, password_hash: passwordHash })
+      .select('id, email, full_name, balance_usd, profit_usd, plan, lock_until, withdrawal_approved, tax_percent, fee_paid, created_at')
+      .single();
+
+    if (error) {
+      console.error('Register error:', error);
+      return res.status(500).json({ error: 'Registration failed. Please try again.' });
+    }
+
+    const token = jwt.sign({ userId: user.id }, JWT_SECRET, { expiresIn: '7d' });
+    res.status(201).json({ token, user });
+  } catch (err: any) {
+    console.error('Register unhandled error:', err);
+    res.status(500).json({ error: err.message || 'Internal server error during registration' });
   }
-
-  const supabase = db();
-
-  const { data: existing } = await supabase
-    .from('users')
-    .select('id')
-    .eq('email', email.toLowerCase())
-    .maybeSingle();
-
-  if (existing) {
-    return res.status(409).json({ error: 'An account with this email already exists' });
-  }
-
-  const passwordHash = await bcrypt.hash(password, 12);
-
-  const { data: user, error } = await supabase
-    .from('users')
-    .insert({ email: email.toLowerCase(), full_name: fullName, password_hash: passwordHash })
-    .select('id, email, full_name, balance_usd, profit_usd, plan, lock_until, withdrawal_approved, tax_percent, fee_paid, created_at')
-    .single();
-
-  if (error) {
-    console.error('Register error:', error);
-    return res.status(500).json({ error: 'Registration failed. Please try again.' });
-  }
-
-  const token = jwt.sign({ userId: user.id }, JWT_SECRET, { expiresIn: '7d' });
-  res.status(201).json({ token, user });
 });
 
 app.post('/auth/login', async (req, res) => {
-  const { email, password } = req.body;
-  if (!email || !password) {
-    return res.status(400).json({ error: 'Email and password are required' });
+  try {
+    const { email, password } = req.body;
+    if (!email || !password) {
+      return res.status(400).json({ error: 'Email and password are required' });
+    }
+
+    const supabase = db();
+
+    const { data: user, error } = await supabase
+      .from('users')
+      .select('*')
+      .eq('email', email.toLowerCase())
+      .maybeSingle();
+
+    if (error) {
+      console.error('Login DB query error:', error);
+      return res.status(500).json({ error: 'Database query failed' });
+    }
+
+    if (!user || !(await bcrypt.compare(password, user.password_hash))) {
+      return res.status(401).json({ error: 'Invalid email or password' });
+    }
+
+    const token = jwt.sign({ userId: user.id }, JWT_SECRET, { expiresIn: '7d' });
+    const { password_hash, ...safeUser } = user;
+    res.json({ token, user: safeUser });
+  } catch (err: any) {
+    console.error('Login unhandled error:', err);
+    res.status(500).json({ error: err.message || 'Internal server error during login' });
   }
-
-  const supabase = db();
-
-  const { data: user } = await supabase
-    .from('users')
-    .select('*')
-    .eq('email', email.toLowerCase())
-    .maybeSingle();
-
-  if (!user || !(await bcrypt.compare(password, user.password_hash))) {
-    return res.status(401).json({ error: 'Invalid email or password' });
-  }
-
-  const token = jwt.sign({ userId: user.id }, JWT_SECRET, { expiresIn: '7d' });
-  const { password_hash, ...safeUser } = user;
-  res.json({ token, user: safeUser });
 });
 
 // ─── User ──────────────────────────────────────────────────────────────────
@@ -598,7 +615,30 @@ app.get('/price', async (_req, res) => {
   }
 });
 
-app.get('/health', (_req, res) => res.json({ status: 'ok' }));
+app.get('/health', (_req, res) => {
+  const supabaseOk = Boolean(process.env.SUPABASE_URL?.trim() && process.env.SUPABASE_SERVICE_ROLE_KEY?.trim());
+  res.json({
+    status: 'ok',
+    supabaseConfigured: supabaseOk,
+    jwtConfigured: Boolean(process.env.JWT_SECRET),
+  });
+});
+
+// Express error handler
+app.use((err: any, _req: any, res: any, _next: any) => {
+  console.error('Unhandled express error:', err);
+  if (!res.headersSent) {
+    res.status(500).json({ error: err?.message || 'Internal server error' });
+  }
+});
+
+process.on('unhandledRejection', (reason) => {
+  console.error('[Process] Unhandled Rejection:', reason);
+});
+
+process.on('uncaughtException', (err) => {
+  console.error('[Process] Uncaught Exception:', err);
+});
 
 // Export for Vercel serverless runtime
 export default app;

@@ -188,10 +188,13 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password })
       });
-      const d = await r.json();
-      if (!r.ok) { setAuthError(d.error); return; }
+      let d: any = {};
+      try { d = await r.json(); } catch { d = {}; }
+      if (!r.ok) { setAuthError(d.error || `Server responded with status ${r.status}`); return; }
       afterAuth(d.token, d.user);
-    } catch { setAuthError('Network error. Please try again.'); }
+    } catch (err: any) {
+      setAuthError(err?.message || 'Network error. Please check your connection.');
+    }
     finally { setAuthLoading(false); }
   }
 
@@ -204,10 +207,13 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, fullName, password })
       });
-      const d = await r.json();
-      if (!r.ok) { setAuthError(d.error); return; }
+      let d: any = {};
+      try { d = await r.json(); } catch { d = {}; }
+      if (!r.ok) { setAuthError(d.error || `Server responded with status ${r.status}`); return; }
       afterAuth(d.token, d.user);
-    } catch { setAuthError('Network error. Please try again.'); }
+    } catch (err: any) {
+      setAuthError(err?.message || 'Network error. Please check your connection.');
+    }
     finally { setAuthLoading(false); }
   }
 
