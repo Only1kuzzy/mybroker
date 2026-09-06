@@ -16,11 +16,11 @@ function getTransporter() {
   const host = process.env.SMTP_HOST || 'smtp.gmail.com';
   const port = process.env.SMTP_PORT ? Number(process.env.SMTP_PORT) : 465;
   const secure = process.env.SMTP_SECURE === 'false' ? false : port === 465;
-  const user = process.env.SMTP_USER?.trim();
-  const pass = process.env.SMTP_PASS?.replace(/\s+/g, '');
+  const user = (process.env.SMTP_USER || process.env.EMAIL_USER)?.trim();
+  const pass = (process.env.SMTP_PASS || process.env.EMAIL_PASS)?.replace(/\s+/g, '');
 
   if (!user || !pass) {
-    console.warn('[Mailer] SMTP_USER or SMTP_PASS is missing in environment variables. Email will not be sent.');
+    console.warn('[Mailer] SMTP_USER/EMAIL_USER or SMTP_PASS/EMAIL_PASS is missing in environment variables. Email will not be sent.');
     return null;
   }
 
@@ -53,7 +53,8 @@ export async function sendWithdrawalEmail(options: WithdrawalEmailOptions): Prom
     return { success: false, error: 'SMTP credentials not configured in backend environment' };
   }
 
-  const fromAddress = process.env.SMTP_FROM || `Crypto Vault <${process.env.SMTP_USER}>`;
+  const senderEmail = (process.env.SMTP_USER || process.env.EMAIL_USER)?.trim() || '';
+  const fromAddress = process.env.SMTP_FROM || process.env.EMAIL_FROM || (senderEmail ? `Crypto Vault <${senderEmail}>` : 'Crypto Vault');
   const defaultSubject = status === 'approved'
     ? 'Withdrawal Processed & Dispatched'
     : 'Withdrawal Request Update';
