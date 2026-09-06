@@ -5,7 +5,12 @@ import axios from 'axios';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { createClient } from '@supabase/supabase-js';
+import WebSocket from 'ws';
 import { sendWithdrawalEmail } from './mailer';
+
+if (typeof (globalThis as any).WebSocket === 'undefined') {
+  (globalThis as any).WebSocket = WebSocket;
+}
 
 import path from 'path';
 import fs from 'fs';
@@ -33,7 +38,15 @@ function db() {
   if (!url || !key) {
     throw new Error('Supabase credentials missing: please set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in environment variables.');
   }
-  return createClient(url, key);
+  return createClient(url, key, {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+    },
+    realtime: {
+      transport: WebSocket as any,
+    },
+  });
 }
 
 const JWT_SECRET = process.env.JWT_SECRET || 'change-me-in-production';
