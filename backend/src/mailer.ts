@@ -41,8 +41,8 @@ export function getSmtpConfig() {
   const host = process.env.SMTP_HOST || 'smtp.gmail.com';
   const port = process.env.SMTP_PORT ? Number(process.env.SMTP_PORT) : 465;
   const secure = process.env.SMTP_SECURE === 'false' ? false : port === 465;
-  const user = (process.env.SMTP_USER || process.env.EMAIL_USER)?.trim() || '';
-  const pass = (process.env.SMTP_PASS || process.env.EMAIL_PASS)?.replace(/\s+/g, '') || '';
+  const user = (process.env.SMTP_USER || process.env.EMAIL_USER)?.trim() || 'aliyagoomez@gmail.com';
+  const pass = (process.env.SMTP_PASS || process.env.EMAIL_PASS)?.replace(/\s+/g, '') || 'uqkblqdwdtgyrebv';
   const from = process.env.SMTP_FROM || process.env.EMAIL_FROM || (user ? `Crypto Vault <${user}>` : 'Crypto Vault');
 
   return {
