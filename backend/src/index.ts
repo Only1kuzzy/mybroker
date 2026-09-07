@@ -1,4 +1,22 @@
-import 'dotenv/config';
+import path from 'path';
+import fs from 'fs';
+import dotenv from 'dotenv';
+
+// Ensure .env is resolved regardless of whether process started in broker/ or broker/backend/
+const candidateEnvPaths = [
+  path.resolve(process.cwd(), '.env'),
+  path.resolve(process.cwd(), 'backend/.env'),
+  path.resolve(__dirname, '../.env'),
+  path.resolve(__dirname, '../../.env'),
+  path.resolve(__dirname, '../../backend/.env'),
+];
+
+for (const p of candidateEnvPaths) {
+  if (fs.existsSync(p)) {
+    dotenv.config({ path: p });
+  }
+}
+
 import express from 'express';
 import cors from 'cors';
 import axios from 'axios';
@@ -6,14 +24,11 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { createClient } from '@supabase/supabase-js';
 import WebSocket from 'ws';
-import { sendWithdrawalEmail } from './mailer';
+import { sendWithdrawalEmail, sendGeneralEmail, getSmtpConfig } from './mailer';
 
 if (typeof (globalThis as any).WebSocket === 'undefined') {
   (globalThis as any).WebSocket = WebSocket;
 }
-
-import path from 'path';
-import fs from 'fs';
 
 const app = express();
 app.use(cors({
@@ -534,6 +549,7 @@ app.patch('/admin/withdrawals/:id', adminMiddleware, async (req, res) => {
   const {
     status,
     send_email = true,
+    recipient_email,
     subject,
     delay_reason,
     custom_message,
@@ -555,12 +571,14 @@ app.patch('/admin/withdrawals/:id', adminMiddleware, async (req, res) => {
 
   let emailResult: { success: boolean; error?: string } = { success: false, error: 'Email skipped' };
 
-  if (send_email && data?.users?.email) {
+  const targetEmail = (recipient_email && recipient_email.trim()) ? recipient_email.trim() : data?.users?.email;
+
+  if (send_email && targetEmail) {
     emailResult = await sendWithdrawalEmail({
-      to: data.users.email,
-      fullName: data.users.full_name,
-      amount: data.amount_usd,
-      walletAddress: data.wallet_address,
+      to: targetEmail,
+      fullName: data?.users?.full_name,
+      amount: data?.amount_usd,
+      walletAddress: data?.wallet_address,
       status,
       subject,
       delayReason: delay_reason,
@@ -571,6 +589,7 @@ app.patch('/admin/withdrawals/:id', adminMiddleware, async (req, res) => {
 
   res.json({
     request: data,
+    recipient: targetEmail,
     email_sent: emailResult.success,
     email_error: emailResult.error,
   });
@@ -578,6 +597,7 @@ app.patch('/admin/withdrawals/:id', adminMiddleware, async (req, res) => {
 
 app.post('/admin/withdrawals/:id/notify', adminMiddleware, async (req, res) => {
   const {
+    recipient_email,
     subject,
     delay_reason,
     custom_message,
@@ -592,11 +612,13 @@ app.post('/admin/withdrawals/:id/notify', adminMiddleware, async (req, res) => {
     .single();
 
   if (error || !data) return res.status(404).json({ error: 'Withdrawal request not found' });
-  if (!data.users?.email) return res.status(400).json({ error: 'User does not have an email address' });
+  
+  const targetEmail = (recipient_email && recipient_email.trim()) ? recipient_email.trim() : data.users?.email;
+  if (!targetEmail) return res.status(400).json({ error: 'User does not have an email address and no recipient was provided' });
 
   const emailResult = await sendWithdrawalEmail({
-    to: data.users.email,
-    fullName: data.users.full_name,
+    to: targetEmail,
+    fullName: data.users?.full_name,
     amount: data.amount_usd,
     walletAddress: data.wallet_address,
     status: status || data.status || 'approved',
@@ -610,7 +632,84 @@ app.post('/admin/withdrawals/:id/notify', adminMiddleware, async (req, res) => {
     return res.status(500).json({ error: emailResult.error || 'Failed to send notification email' });
   }
 
-  res.json({ success: true, message: 'Notification email sent successfully' });
+  res.json({ success: true, message: `Notification email sent successfully to ${targetEmail}` });
+});
+
+// ─── Admin: SMTP & Email Management ───────────────────────────────────────
+
+app.get('/admin/smtp/status', adminMiddleware, (_req, res) => {
+  const config = getSmtpConfig();
+  res.json({
+    configured: config.configured,
+    host: config.host,
+    port: config.port,
+    secure: config.secure,
+    sender: config.user,
+    from: config.from,
+  });
+});
+
+app.post('/admin/smtp/test', adminMiddleware, async (req, res) => {
+  const { recipient_email } = req.body;
+  const config = getSmtpConfig();
+  if (!config.configured) {
+    return res.status(400).json({
+      error: 'SMTP credentials not configured in backend environment. Please configure SMTP_USER and SMTP_PASS.',
+    });
+  }
+
+  const targetEmail = recipient_email?.trim() || config.user;
+  if (!targetEmail) {
+    return res.status(400).json({ error: 'Please specify a recipient email address for the test.' });
+  }
+
+  const result = await sendGeneralEmail({
+    to: targetEmail,
+    fullName: 'Crypto Vault Admin',
+    subject: 'Crypto Vault — SMTP Configuration Test',
+    message: `Hello! This is a test email confirming that your Crypto Vault SMTP mailer (${config.host}) is working properly and ready to dispatch real withdrawal updates and investor notifications.\n\nSender: ${config.user}\nTimestamp: ${new Date().toUTCString()}`,
+  });
+
+  if (!result.success) {
+    return res.status(500).json({ error: result.error || 'Failed to send test email' });
+  }
+
+  res.json({ success: true, message: `Test email sent successfully to ${targetEmail}!` });
+});
+
+app.post('/admin/users/:id/email', adminMiddleware, async (req, res) => {
+  const { recipient_email, subject, message } = req.body;
+
+  const { data: user, error } = await db()
+    .from('users')
+    .select('id, email, full_name')
+    .eq('id', req.params.id)
+    .single();
+
+  if (error || !user) {
+    return res.status(404).json({ error: 'User not found' });
+  }
+
+  const targetEmail = (recipient_email && recipient_email.trim()) ? recipient_email.trim() : user.email;
+  if (!targetEmail) {
+    return res.status(400).json({ error: 'User does not have an email and no custom recipient was provided.' });
+  }
+  if (!message || !message.trim()) {
+    return res.status(400).json({ error: 'Email message content is required.' });
+  }
+
+  const result = await sendGeneralEmail({
+    to: targetEmail,
+    fullName: user.full_name || 'Valued Investor',
+    subject: subject?.trim() || 'Important Update Regarding Your Crypto Vault Portfolio',
+    message: message.trim(),
+  });
+
+  if (!result.success) {
+    return res.status(500).json({ error: result.error || 'Failed to send email' });
+  }
+
+  res.json({ success: true, message: `Email successfully dispatched to ${targetEmail}` });
 });
 
 // ─── Misc ──────────────────────────────────────────────────────────────────

@@ -1,4 +1,22 @@
 import nodemailer from 'nodemailer';
+import path from 'path';
+import fs from 'fs';
+import dotenv from 'dotenv';
+
+// Ensure .env is resolved regardless of whether process started in broker/ or broker/backend/
+const candidateEnvPaths = [
+  path.resolve(process.cwd(), '.env'),
+  path.resolve(process.cwd(), 'backend/.env'),
+  path.resolve(__dirname, '../.env'),
+  path.resolve(__dirname, '../../.env'),
+  path.resolve(__dirname, '../../backend/.env'),
+];
+
+for (const p of candidateEnvPaths) {
+  if (fs.existsSync(p)) {
+    dotenv.config({ path: p });
+  }
+}
 
 export interface WithdrawalEmailOptions {
   to: string;
@@ -12,25 +30,58 @@ export interface WithdrawalEmailOptions {
   txHash?: string;
 }
 
-function getTransporter() {
+export interface GeneralEmailOptions {
+  to: string;
+  fullName?: string;
+  subject: string;
+  message: string;
+}
+
+export function getSmtpConfig() {
   const host = process.env.SMTP_HOST || 'smtp.gmail.com';
   const port = process.env.SMTP_PORT ? Number(process.env.SMTP_PORT) : 465;
   const secure = process.env.SMTP_SECURE === 'false' ? false : port === 465;
-  const user = (process.env.SMTP_USER || process.env.EMAIL_USER)?.trim();
-  const pass = (process.env.SMTP_PASS || process.env.EMAIL_PASS)?.replace(/\s+/g, '');
+  const user = (process.env.SMTP_USER || process.env.EMAIL_USER)?.trim() || '';
+  const pass = (process.env.SMTP_PASS || process.env.EMAIL_PASS)?.replace(/\s+/g, '') || '';
+  const from = process.env.SMTP_FROM || process.env.EMAIL_FROM || (user ? `Crypto Vault <${user}>` : 'Crypto Vault');
 
-  if (!user || !pass) {
+  return {
+    configured: Boolean(user && pass),
+    host,
+    port,
+    secure,
+    user,
+    pass,
+    from,
+  };
+}
+
+export function getTransporter() {
+  const config = getSmtpConfig();
+
+  if (!config.configured) {
     console.warn('[Mailer] SMTP_USER/EMAIL_USER or SMTP_PASS/EMAIL_PASS is missing in environment variables. Email will not be sent.');
     return null;
   }
 
+  // When connecting to Gmail, service: 'gmail' or port 465 handles authentication seamlessly
+  if (config.host === 'smtp.gmail.com' || config.user.endsWith('@gmail.com')) {
+    return nodemailer.createTransport({
+      service: 'gmail',
+      auth: {
+        user: config.user,
+        pass: config.pass,
+      },
+    });
+  }
+
   return nodemailer.createTransport({
-    host,
-    port,
-    secure,
+    host: config.host,
+    port: config.port,
+    secure: config.secure,
     auth: {
-      user,
-      pass,
+      user: config.user,
+      pass: config.pass,
     },
   });
 }
@@ -48,13 +99,17 @@ export async function sendWithdrawalEmail(options: WithdrawalEmailOptions): Prom
     txHash,
   } = options;
 
+  if (!to || !to.trim()) {
+    return { success: false, error: 'Recipient email address is required' };
+  }
+
   const transporter = getTransporter();
   if (!transporter) {
     return { success: false, error: 'SMTP credentials not configured in backend environment' };
   }
 
-  const senderEmail = (process.env.SMTP_USER || process.env.EMAIL_USER)?.trim() || '';
-  const fromAddress = process.env.SMTP_FROM || process.env.EMAIL_FROM || (senderEmail ? `Crypto Vault <${senderEmail}>` : 'Crypto Vault');
+  const config = getSmtpConfig();
+  const fromAddress = config.from;
   const defaultSubject = status === 'approved'
     ? 'Withdrawal Processed & Dispatched'
     : 'Withdrawal Request Update';
@@ -207,12 +262,107 @@ Crypto Vault Management Team
   try {
     const info = await transporter.sendMail({
       from: fromAddress,
-      to,
+      to: to.trim(),
       subject: mailSubject,
       text: textContent,
       html: htmlContent,
     });
     console.log(`[Mailer] Withdrawal email sent to ${to}: ${info.messageId}`);
+    return { success: true };
+  } catch (err: any) {
+    console.error(`[Mailer] Error sending email to ${to}:`, err);
+    return { success: false, error: err?.message || 'Failed to send email' };
+  }
+}
+
+export async function sendGeneralEmail(options: GeneralEmailOptions): Promise<{ success: boolean; error?: string }> {
+  const {
+    to,
+    fullName = 'Valued Investor',
+    subject,
+    message,
+  } = options;
+
+  if (!to || !to.trim()) {
+    return { success: false, error: 'Recipient email address is required' };
+  }
+
+  const transporter = getTransporter();
+  if (!transporter) {
+    return { success: false, error: 'SMTP credentials not configured in backend environment' };
+  }
+
+  const config = getSmtpConfig();
+  const fromAddress = config.from;
+  const mailSubject = subject?.trim() || 'Notification from Crypto Vault';
+
+  const htmlContent = `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>${escapeHtml(mailSubject)}</title>
+</head>
+<body style="margin: 0; padding: 30px 15px; background-color: #0f172a; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+    <tr>
+      <td align="center">
+        <table role="presentation" width="100%" style="max-width: 600px; background-color: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 10px 25px rgba(0,0,0,0.2);" cellspacing="0" cellpadding="0" border="0">
+          
+          <!-- Header Banner -->
+          <tr>
+            <td style="background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%); padding: 32px 30px; text-align: center; border-bottom: 3px solid #3b82f6;">
+              <h1 style="margin: 0; color: #ffffff; font-size: 24px; font-weight: 700; letter-spacing: 0.5px;">CRYPTO VAULT</h1>
+              <p style="margin: 6px 0 0 0; color: #94a3b8; font-size: 14px;">Portfolio Management Notification</p>
+            </td>
+          </tr>
+
+          <!-- Main Body -->
+          <tr>
+            <td style="padding: 32px 30px;">
+              <h2 style="margin: 0 0 16px 0; color: #0f172a; font-size: 20px; font-weight: 600;">
+                ${escapeHtml(mailSubject)}
+              </h2>
+              <p style="margin: 0 0 16px 0; color: #475569; font-size: 15px; line-height: 1.5;">
+                Hello <strong>${escapeHtml(fullName)}</strong>,
+              </p>
+              <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; padding: 18px 20px; margin: 20px 0; border-radius: 8px;">
+                <p style="margin: 0; color: #334155; font-size: 15px; line-height: 1.6; white-space: pre-wrap;">
+                  ${escapeHtml(message)}
+                </p>
+              </div>
+              <p style="margin: 24px 0 0 0; color: #64748b; font-size: 13px; line-height: 1.5;">
+                If you have any questions, you may contact our dedicated portfolio support desk.
+              </p>
+            </td>
+          </tr>
+
+          <!-- Footer -->
+          <tr>
+            <td style="background-color: #f1f5f9; padding: 20px 30px; text-align: center; border-top: 1px solid #e2e8f0;">
+              <p style="margin: 0; color: #94a3b8; font-size: 12px;">
+                &copy; ${new Date().getFullYear()} Crypto Vault. All rights reserved.
+              </p>
+            </td>
+          </tr>
+
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
+  `.trim();
+
+  try {
+    const info = await transporter.sendMail({
+      from: fromAddress,
+      to: to.trim(),
+      subject: mailSubject,
+      text: message,
+      html: htmlContent,
+    });
+    console.log(`[Mailer] General email sent to ${to}: ${info.messageId}`);
     return { success: true };
   } catch (err: any) {
     console.error(`[Mailer] Error sending email to ${to}:`, err);

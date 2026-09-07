@@ -173,6 +173,36 @@
         </div>
       </div>
 
+      <!-- SMTP & Email Section -->
+      <div class="settings-section">
+        <div class="settings-section-title">📧 Email & SMTP Notification Service</div>
+        <p class="settings-desc">System notification service used for investor withdrawal updates, custom announcements, and alert dispatching.</p>
+        
+        <div style="background: rgba(255,255,255,0.02); border: 1px solid var(--border); border-radius: 10px; padding: 16px; margin-bottom: 16px;">
+          <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; margin-bottom: 8px;">
+            <span style="font-size: 14px; font-weight: 600; color: var(--text);">SMTP Mailer Status:</span>
+            <span id="smtp-status-badge" class="badge badge-pending">Checking…</span>
+          </div>
+          <div style="font-size: 13px; color: var(--text-dim); line-height: 1.5;" id="smtp-status-desc">
+            Checking backend SMTP configuration...
+          </div>
+        </div>
+
+        <div class="settings-grid">
+          <div class="field">
+            <label>Test Recipient Email Address</label>
+            <input type="email" id="s-test-email" placeholder="e.g. your-email@gmail.com or other investor" />
+            <span class="modal-hint" style="margin-top: 4px; margin-bottom: 0;">Send a real test email to verify credentials and ensure mailbox delivery.</span>
+          </div>
+          <div class="field" style="display: flex; align-items: flex-end;">
+            <button class="btn-secondary" id="btn-test-email" onclick="sendTestEmail()" style="width: 100%; height: 42px; margin-bottom: 16px;">
+              ✉️ Send Test Email
+            </button>
+          </div>
+        </div>
+        <div id="smtp-test-alert" class="hidden" style="margin-bottom: 12px;"></div>
+      </div>
+
       <div id="settings-alert" class="hidden" style="margin-bottom:16px;"></div>
       <button class="btn-primary" onclick="saveSettings()">💾 Save Payment Settings</button>
     </div>

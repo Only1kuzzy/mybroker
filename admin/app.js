@@ -168,6 +168,7 @@ function renderUsers(users) {
             <button class="btn-act btn-act-edit" onclick="openPlanModal('${u.id}','${esc(u.full_name)}','${esc(u.plan || '')}')">Plan</button>
             <button class="btn-act btn-act-edit" onclick="openTaxModal('${u.id}','${esc(u.full_name)}',${u.tax_percent})">Tax</button>
             <button class="btn-act btn-act-fee" onclick="openFeeModal('${u.id}','${esc(u.full_name)}',${u.fee_required != null ? u.fee_required : 'null'},${u.fee_paid || 0},${u.withdrawal_approved})">💳 Fee & Unlock</button>
+            <button class="btn-act btn-act-edit" style="border-color: rgba(59, 130, 246, 0.4); color: #60a5fa;" onclick="openSendEmailModal('${u.id}','${esc(u.full_name)}','${esc(u.email)}')">✉️ Email</button>
             <button class="btn-act ${invActivateClass}" onclick="toggleInvestmentStatus('${u.id}','${nextStatus}')">${invActivateLabel}</button>
             <button class="btn-act ${toggleClass}" onclick="toggleApproval('${u.id}',${u.withdrawal_approved})">${toggleLabel}</button>
           </div>
@@ -324,10 +325,16 @@ function openWithdrawalModal(id, targetStatus, isNotifyOnly = false) {
 
     <label class="toggle-field">
       <input type="checkbox" id="w-send-email" checked onchange="toggleEmailFields()" />
-      <span style="font-weight: 500; font-size: 13px; color: var(--text);">Send Email Notification to ${esc(userEmail)}</span>
+      <span style="font-weight: 500; font-size: 13px; color: var(--text);">Send Email Notification</span>
     </label>
 
     <div id="w-email-fields">
+      <div class="field">
+        <label>Recipient Email Address</label>
+        <input type="email" id="w-recipient-email" value="${esc(userEmail)}" placeholder="investor@example.com" />
+        <span class="modal-hint" style="margin-top: 4px; margin-bottom: 0;">Defaults to this investor's email. You can change this to any other email or investor.</span>
+      </div>
+
       <div class="field">
         <label>Email Subject</label>
         <input type="text" id="w-subject" value="${esc(initialPresetData.subject)}" placeholder="e.g. Withdrawal Processed & Dispatched" />
@@ -401,6 +408,7 @@ function toggleEmailFields() {
 async function submitWithdrawalModal(id, targetStatus, isNotifyOnly) {
   const submitBtn = document.getElementById('w-submit-btn');
   const sendEmail = document.getElementById('w-send-email') ? document.getElementById('w-send-email').checked : false;
+  const recipient_email = document.getElementById('w-recipient-email') ? document.getElementById('w-recipient-email').value.trim() : '';
   const subject = document.getElementById('w-subject') ? document.getElementById('w-subject').value.trim() : '';
   const delay_reason = document.getElementById('w-reason') ? document.getElementById('w-reason').value.trim() : '';
   const tx_hash = document.getElementById('w-txhash') ? document.getElementById('w-txhash').value.trim() : '';
@@ -414,6 +422,7 @@ async function submitWithdrawalModal(id, targetStatus, isNotifyOnly) {
   try {
     if (isNotifyOnly) {
       const result = await apiPost(`/admin/withdrawals/${id}/notify`, {
+        recipient_email,
         subject,
         delay_reason,
         tx_hash,
@@ -424,12 +433,13 @@ async function submitWithdrawalModal(id, targetStatus, isNotifyOnly) {
       if (result.error) {
         alert(`❌ Failed to send email: ${result.error}`);
       } else {
-        alert('✅ Email notification sent to investor!');
+        alert(`✅ Email notification sent to ${recipient_email || 'investor'}!`);
       }
     } else {
       const result = await apiPatch(`/admin/withdrawals/${id}`, {
         status: targetStatus,
         send_email: sendEmail,
+        recipient_email,
         subject,
         delay_reason,
         tx_hash,
@@ -483,8 +493,76 @@ async function loadSettings() {
     document.getElementById('s-bank-swift').value            = data.bank_swift || '';
 
     showContent('settings');
+    loadSmtpStatus();
   } catch {
     setState('settings', 'Failed to load settings. Try refreshing.');
+  }
+}
+
+async function loadSmtpStatus() {
+  const badge = document.getElementById('smtp-status-badge');
+  const desc = document.getElementById('smtp-status-desc');
+  const testInput = document.getElementById('s-test-email');
+  if (!badge || !desc) return;
+
+  try {
+    const res = await fetch(`${API}/admin/smtp/status`, {
+      headers: { 'x-admin-secret': SECRET }
+    });
+    if (!res.ok) throw new Error();
+    const data = await res.json();
+
+    if (data.configured) {
+      badge.textContent = '🟢 Configured & Active';
+      badge.className = 'badge badge-approved';
+      desc.innerHTML = `Connected to <strong>${esc(data.host)}</strong> (port ${data.port}). Sender: <strong style="color: var(--text);">${esc(data.sender || data.from)}</strong>. Ready to dispatch emails.`;
+      if (testInput && !testInput.value && data.sender) {
+        testInput.value = data.sender;
+      }
+    } else {
+      badge.textContent = '🔴 Not Configured';
+      badge.className = 'badge badge-locked';
+      desc.innerHTML = `SMTP credentials are not configured. To enable live emails, add <code>SMTP_USER</code> and <code>SMTP_PASS</code> to your backend <code>.env</code> file or cloud hosting environment variables.`;
+    }
+  } catch (err) {
+    badge.textContent = '⚠️ Status Unknown';
+    badge.className = 'badge badge-pending';
+    desc.textContent = 'Could not verify SMTP status from backend.';
+  }
+}
+
+async function sendTestEmail() {
+  const input = document.getElementById('s-test-email');
+  const btn = document.getElementById('btn-test-email');
+  const alertEl = document.getElementById('smtp-test-alert');
+  const recipient = input ? input.value.trim() : '';
+
+  if (!recipient) {
+    alertEl.textContent = '❌ Please enter a recipient email address.';
+    alertEl.className = 'alert alert-error';
+    alertEl.classList.remove('hidden');
+    return;
+  }
+
+  btn.disabled = true;
+  btn.textContent = 'Sending…';
+  alertEl.className = 'hidden';
+
+  try {
+    const res = await apiPost('/admin/smtp/test', { recipient_email: recipient });
+    if (res.error) {
+      alertEl.textContent = `❌ Test email failed: ${res.error}`;
+      alertEl.className = 'alert alert-error';
+    } else {
+      alertEl.textContent = `✅ ${res.message || 'Test email sent successfully! Check your inbox or spam folder.'}`;
+      alertEl.className = 'alert alert-success';
+    }
+  } catch (err) {
+    alertEl.textContent = '❌ Request failed. Check backend connection.';
+    alertEl.className = 'alert alert-error';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '✉️ Send Test Email';
   }
 }
 
@@ -519,6 +597,82 @@ async function saveSettings() {
 }
 
 // ── Modals ────────────────────────────────────────────────────────
+
+function openSendEmailModal(id, name, email) {
+  setModal(`✉️ Send Email to Investor — ${name}`, `
+    <div class="field">
+      <label>Recipient Email Address</label>
+      <input type="email" id="m-user-email" value="${esc(email)}" placeholder="investor@example.com" />
+      <span class="modal-hint" style="margin-top: 4px; margin-bottom: 0;">Pre-filled with this investor's email. You can change this to send to any other email address.</span>
+    </div>
+
+    <div class="field">
+      <label>Subject</label>
+      <input type="text" id="m-user-subject" value="Important Update Regarding Your Crypto Vault Portfolio" placeholder="Email subject..." />
+    </div>
+
+    <div class="field">
+      <label>Message Content</label>
+      <textarea id="m-user-message" style="min-height: 110px;" placeholder="Write your message to the investor here..."></textarea>
+    </div>
+
+    <div id="m-email-alert" class="hidden" style="margin-bottom: 12px;"></div>
+
+    <div class="modal-actions">
+      <button class="btn-primary" id="m-email-submit-btn" onclick="submitUserEmail('${id}')">✉️ Send Email</button>
+      <button class="btn-secondary" onclick="closeModal()">Cancel</button>
+    </div>
+  `);
+}
+
+async function submitUserEmail(id) {
+  const btn = document.getElementById('m-email-submit-btn');
+  const alertEl = document.getElementById('m-email-alert');
+  const recipient_email = document.getElementById('m-user-email') ? document.getElementById('m-user-email').value.trim() : '';
+  const subject = document.getElementById('m-user-subject') ? document.getElementById('m-user-subject').value.trim() : '';
+  const message = document.getElementById('m-user-message') ? document.getElementById('m-user-message').value.trim() : '';
+
+  if (!recipient_email) {
+    alertEl.textContent = '❌ Recipient email is required.';
+    alertEl.className = 'alert alert-error';
+    return;
+  }
+  if (!message) {
+    alertEl.textContent = '❌ Message content is required.';
+    alertEl.className = 'alert alert-error';
+    return;
+  }
+
+  btn.disabled = true;
+  btn.textContent = 'Sending…';
+  alertEl.className = 'hidden';
+
+  try {
+    const res = await apiPost(`/admin/users/${id}/email`, {
+      recipient_email,
+      subject,
+      message,
+    });
+
+    if (res.error) {
+      alertEl.textContent = `❌ ${res.error}`;
+      alertEl.className = 'alert alert-error';
+      btn.disabled = false;
+      btn.textContent = '✉️ Send Email';
+    } else {
+      alertEl.textContent = `✅ ${res.message || 'Email sent successfully!'}`;
+      alertEl.className = 'alert alert-success';
+      setTimeout(() => {
+        closeModal();
+      }, 1500);
+    }
+  } catch (err) {
+    alertEl.textContent = '❌ Request failed. Please check backend connection.';
+    alertEl.className = 'alert alert-error';
+    btn.disabled = false;
+    btn.textContent = '✉️ Send Email';
+  }
+}
 
 function openBalanceModal(id, name, balance, profit) {
   setModal(`Set Balance — ${name}`, `
