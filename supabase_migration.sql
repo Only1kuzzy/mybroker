@@ -21,13 +21,21 @@ CREATE TABLE IF NOT EXISTS payment_settings (
   bank_swift          TEXT DEFAULT '',
   withdrawal_fee      NUMERIC(12, 2) DEFAULT 0,
   gas_fee             NUMERIC(12, 2) DEFAULT 200,
+  gas_fee_threshold   NUMERIC(12, 2) DEFAULT 20000,
+  gas_fee_low         NUMERIC(12, 2) DEFAULT 100,
+  gas_fee_high        NUMERIC(12, 2) DEFAULT 200,
+  gas_fee_tiers       TEXT DEFAULT '',
   updated_at          TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Add withdrawal_fee and gas_fee to existing payment_settings table if it already exists
+-- Add withdrawal_fee and gas fee columns to existing payment_settings table if it already exists
 ALTER TABLE payment_settings
-  ADD COLUMN IF NOT EXISTS withdrawal_fee NUMERIC(12, 2) DEFAULT 0,
-  ADD COLUMN IF NOT EXISTS gas_fee        NUMERIC(12, 2) DEFAULT 200;
+  ADD COLUMN IF NOT EXISTS withdrawal_fee      NUMERIC(12, 2) DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS gas_fee             NUMERIC(12, 2) DEFAULT 200,
+  ADD COLUMN IF NOT EXISTS gas_fee_threshold   NUMERIC(12, 2) DEFAULT 20000,
+  ADD COLUMN IF NOT EXISTS gas_fee_low         NUMERIC(12, 2) DEFAULT 100,
+  ADD COLUMN IF NOT EXISTS gas_fee_high        NUMERIC(12, 2) DEFAULT 200,
+  ADD COLUMN IF NOT EXISTS gas_fee_tiers       TEXT DEFAULT '';
 
 -- 3. Add custom_gas_fee to users table
 ALTER TABLE users

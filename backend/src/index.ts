@@ -257,34 +257,79 @@ app.post('/investment/submit', authMiddleware, async (req: any, res) => {
   }
 });
 
-// ─── Payment Settings (public read) ────────────────────────────────────────
+function calculateGasFee(amount: number, settings: any, customGasFee?: number | null): number {
+  if (customGasFee != null && Number(customGasFee) >= 0) {
+    return Number(customGasFee);
+  }
+
+  // If custom multi-tier JSON is configured
+  if (settings?.gas_fee_tiers) {
+    try {
+      const tiers = typeof settings.gas_fee_tiers === 'string'
+        ? JSON.parse(settings.gas_fee_tiers)
+        : settings.gas_fee_tiers;
+      if (Array.isArray(tiers) && tiers.length > 0) {
+        const sorted = [...tiers].sort((a, b) => (Number(a.min_amount) || 0) - (Number(b.min_amount) || 0));
+        let matchedFee = Number(sorted[0].gas_fee) || 100;
+        for (const tier of sorted) {
+          if (amount >= (Number(tier.min_amount) || 0)) {
+            matchedFee = Number(tier.gas_fee);
+          }
+        }
+        return matchedFee;
+      }
+    } catch {
+      // ignore parse error, fallback to threshold logic
+    }
+  }
+
+  // Standard threshold logic (e.g. 100 for < 20,000, 200 for 20,000+)
+  const threshold = settings?.gas_fee_threshold != null ? Number(settings.gas_fee_threshold) : 20000;
+  const feeLow = settings?.gas_fee_low != null ? Number(settings.gas_fee_low) : 100;
+  const feeHigh = settings?.gas_fee_high != null
+    ? Number(settings.gas_fee_high)
+    : (settings?.gas_fee != null ? Number(settings.gas_fee) : 200);
+
+  return amount >= threshold ? feeHigh : feeLow;
+}
+
+// ─── Settings ───────────────────────────────────────────────────────────────
 
 app.get('/settings/payment', async (_req, res) => {
-  const supabase = db();
-  const { data, error } = await supabase
+  const { data, error } = await db()
     .from('payment_settings')
     .select('*')
     .eq('id', 1)
     .maybeSingle();
 
+  const defaultSettings = {
+    crypto_wallet: '',
+    crypto_network: 'Bitcoin (BTC)',
+    bank_name: '',
+    bank_account_name: '',
+    bank_account_number: '',
+    bank_routing: '',
+    bank_swift: '',
+    withdrawal_fee: 0,
+    gas_fee: 200,
+    gas_fee_threshold: 20000,
+    gas_fee_low: 100,
+    gas_fee_high: 200,
+    gas_fee_tiers: '',
+  };
+
   if (error || !data) {
-    // Return defaults if not configured yet
-    return res.json({
-      crypto_wallet: '',
-      crypto_network: 'Bitcoin (BTC)',
-      bank_name: '',
-      bank_account_name: '',
-      bank_account_number: '',
-      bank_routing: '',
-      bank_swift: '',
-      withdrawal_fee: 0,
-      gas_fee: 200,
-    });
+    return res.json(defaultSettings);
   }
 
   res.json({
+    ...defaultSettings,
     ...data,
     gas_fee: data.gas_fee != null ? Number(data.gas_fee) : 200,
+    gas_fee_threshold: data.gas_fee_threshold != null ? Number(data.gas_fee_threshold) : 20000,
+    gas_fee_low: data.gas_fee_low != null ? Number(data.gas_fee_low) : 100,
+    gas_fee_high: data.gas_fee_high != null ? Number(data.gas_fee_high) : 200,
+    gas_fee_tiers: data.gas_fee_tiers || '',
   });
 });
 
@@ -301,9 +346,17 @@ app.patch('/admin/settings/payment', adminMiddleware, async (req, res) => {
     bank_swift,
     withdrawal_fee,
     gas_fee,
+    gas_fee_threshold,
+    gas_fee_low,
+    gas_fee_high,
+    gas_fee_tiers,
   } = req.body;
 
   const supabase = db();
+
+  const resolvedGasFeeHigh = gas_fee_high != null ? Number(gas_fee_high) : (gas_fee != null ? Number(gas_fee) : 200);
+  const resolvedGasFeeLow = gas_fee_low != null ? Number(gas_fee_low) : 100;
+  const resolvedThreshold = gas_fee_threshold != null ? Number(gas_fee_threshold) : 20000;
 
   const upsertPayload: any = {
     id: 1,
@@ -315,7 +368,11 @@ app.patch('/admin/settings/payment', adminMiddleware, async (req, res) => {
     bank_routing,
     bank_swift,
     withdrawal_fee: withdrawal_fee != null ? Number(withdrawal_fee) : 0,
-    gas_fee: gas_fee != null ? Number(gas_fee) : 200,
+    gas_fee: resolvedGasFeeHigh,
+    gas_fee_high: resolvedGasFeeHigh,
+    gas_fee_low: resolvedGasFeeLow,
+    gas_fee_threshold: resolvedThreshold,
+    gas_fee_tiers: gas_fee_tiers ? String(gas_fee_tiers) : '',
   };
 
   // Upsert row with id=1
@@ -325,14 +382,27 @@ app.patch('/admin/settings/payment', adminMiddleware, async (req, res) => {
     .select()
     .single();
 
-  if (error && (error.code === '42703' || String(error.message).includes('gas_fee'))) {
-    // Fallback if gas_fee column does not exist yet in Supabase
-    delete upsertPayload.gas_fee;
-    const fallback = await supabase
+  if (error) {
+    // If some newer columns do not exist in Supabase yet, strip them down progressively
+    delete upsertPayload.gas_fee_tiers;
+    delete upsertPayload.gas_fee_threshold;
+    delete upsertPayload.gas_fee_low;
+    delete upsertPayload.gas_fee_high;
+
+    let fallback = await supabase
       .from('payment_settings')
       .upsert(upsertPayload)
       .select()
       .single();
+
+    if (fallback.error) {
+      delete upsertPayload.gas_fee;
+      fallback = await supabase
+        .from('payment_settings')
+        .upsert(upsertPayload)
+        .select()
+        .single();
+    }
     data = fallback.data;
     error = fallback.error;
   }
@@ -345,7 +415,11 @@ app.patch('/admin/settings/payment', adminMiddleware, async (req, res) => {
   res.json({
     settings: {
       ...data,
-      gas_fee: gas_fee != null ? Number(gas_fee) : (data?.gas_fee != null ? Number(data.gas_fee) : 200),
+      gas_fee: resolvedGasFeeHigh,
+      gas_fee_high: resolvedGasFeeHigh,
+      gas_fee_low: resolvedGasFeeLow,
+      gas_fee_threshold: resolvedThreshold,
+      gas_fee_tiers: gas_fee_tiers || '',
     },
   });
 });
@@ -374,7 +448,7 @@ app.post('/withdrawal/request', authMiddleware, async (req: any, res) => {
   // Gate 2: Normal platform fee payment check (Institutional Processing Fee)
   const { data: settings } = await supabase
     .from('payment_settings')
-    .select('withdrawal_fee, gas_fee')
+    .select('*')
     .eq('id', 1)
     .maybeSingle();
 
@@ -404,10 +478,8 @@ app.post('/withdrawal/request', authMiddleware, async (req: any, res) => {
     return res.status(409).json({ error: 'You already have an active pending withdrawal request.' });
   }
 
-  // Blockchain Gas Fee calculation (per withdrawal, speed-up fee)
-  const gasFee = user.custom_gas_fee != null
-    ? Number(user.custom_gas_fee)
-    : (settings?.gas_fee != null ? Number(settings.gas_fee) : 200);
+  // Tiered Blockchain Gas Fee calculation based on withdrawal amount
+  const gasFee = calculateGasFee(numAmount, settings, user.custom_gas_fee);
 
   let requestData = null;
   const { data: reqWithGas, error: gasErr } = await supabase

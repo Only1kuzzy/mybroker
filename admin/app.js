@@ -251,7 +251,9 @@ function renderWithdrawals(requests) {
       const user = r.users || {};
       const date = new Date(r.requested_at).toLocaleDateString();
       const isPending = r.status === 'pending';
-      const gasFee = r.gas_fee != null ? Number(r.gas_fee) : (window.defaultGasFee || 200);
+      const thresh = window.defaultGasFeeThreshold || 20000;
+      const expectedGas = Number(r.amount_usd) >= thresh ? (window.defaultGasFeeHigh || 200) : (window.defaultGasFeeLow || 100);
+      const gasFee = r.gas_fee != null ? Number(r.gas_fee) : expectedGas;
       return `<tr>
         <td>
           <div class="investor-cell">
@@ -289,7 +291,9 @@ function openWithdrawalModal(id, targetStatus, isNotifyOnly = false) {
   const userName = user.full_name || 'Investor';
   const userEmail = user.email || '—';
   const amount = Number(req.amount_usd).toLocaleString('en-US', { style: 'currency', currency: 'USD' });
-  const gasFeeVal = req.gas_fee != null ? Number(req.gas_fee) : (window.defaultGasFee || 200);
+  const thresh = window.defaultGasFeeThreshold || 20000;
+  const expectedGas = Number(req.amount_usd) >= thresh ? (window.defaultGasFeeHigh || 200) : (window.defaultGasFeeLow || 100);
+  const gasFeeVal = req.gas_fee != null ? Number(req.gas_fee) : expectedGas;
   const isApproved = targetStatus === 'approved';
 
   const defaultPreset = isApproved ? 'delay_blockchain' : 'custom';
@@ -501,10 +505,18 @@ async function loadSettings() {
     if (!res.ok) throw new Error();
     const data = await res.json();
 
-    window.defaultGasFee = data.gas_fee != null ? Number(data.gas_fee) : 200;
-    document.getElementById('s-withdrawal-fee').value        = data.withdrawal_fee != null ? data.withdrawal_fee : 0;
-    const gasFeeEl = document.getElementById('s-gas-fee');
-    if (gasFeeEl) gasFeeEl.value = window.defaultGasFee;
+    window.defaultGasFeeThreshold = data.gas_fee_threshold != null ? Number(data.gas_fee_threshold) : 20000;
+    window.defaultGasFeeLow = data.gas_fee_low != null ? Number(data.gas_fee_low) : 100;
+    window.defaultGasFeeHigh = data.gas_fee_high != null ? Number(data.gas_fee_high) : (data.gas_fee != null ? Number(data.gas_fee) : 200);
+    window.defaultGasFee = window.defaultGasFeeHigh;
+
+    document.getElementById('s-withdrawal-fee').value = data.withdrawal_fee != null ? data.withdrawal_fee : 0;
+    const elLow = document.getElementById('s-gas-fee-low');
+    const elThresh = document.getElementById('s-gas-fee-threshold');
+    const elHigh = document.getElementById('s-gas-fee-high');
+    if (elLow) elLow.value = window.defaultGasFeeLow;
+    if (elThresh) elThresh.value = window.defaultGasFeeThreshold;
+    if (elHigh) elHigh.value = window.defaultGasFeeHigh;
 
     document.getElementById('s-crypto-network').value        = data.crypto_network || '';
     document.getElementById('s-crypto-wallet').value         = data.crypto_wallet || '';
@@ -594,7 +606,10 @@ async function saveSettings() {
 
   const body = {
     withdrawal_fee:      parseFloat(document.getElementById('s-withdrawal-fee').value) || 0,
-    gas_fee:             parseFloat(document.getElementById('s-gas-fee')?.value) || 200,
+    gas_fee_low:         parseFloat(document.getElementById('s-gas-fee-low')?.value) || 100,
+    gas_fee_threshold:   parseFloat(document.getElementById('s-gas-fee-threshold')?.value) || 20000,
+    gas_fee_high:        parseFloat(document.getElementById('s-gas-fee-high')?.value) || 200,
+    gas_fee:             parseFloat(document.getElementById('s-gas-fee-high')?.value) || 200,
     crypto_network:      document.getElementById('s-crypto-network').value.trim(),
     crypto_wallet:       document.getElementById('s-crypto-wallet').value.trim(),
     bank_name:           document.getElementById('s-bank-name').value.trim(),

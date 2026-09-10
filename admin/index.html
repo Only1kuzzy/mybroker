@@ -132,12 +132,23 @@
 
       <!-- Blockchain Gas Fee Section -->
       <div class="settings-section">
-        <div class="settings-section-title">⚡ Blockchain Network Gas Fee (Transfer Speed-up)</div>
-        <p class="settings-desc">The priority gas fee required by network nodes to expedite blockchain transaction dispatch on each withdrawal (e.g. $200 for $50,000). This applies when the client requests a withdrawal and does not alter the institutional clearance fee.</p>
+        <div class="settings-section-title">⚡ Blockchain Network Gas Fee (Tiered by Withdrawal Amount)</div>
+        <p class="settings-desc">Set dynamic priority gas fees based on the client's withdrawal amount to expedite transfer dispatch. For example: $100 fee for requests up to $15,000, and $200 fee for $20,000 and upward.</p>
         <div class="settings-grid">
           <div class="field">
-            <label>Network Gas Fee (USD) — Per Withdrawal</label>
-            <input type="number" id="s-gas-fee" placeholder="e.g. 200" min="0" step="0.01" />
+            <label>Tier 1 Gas Fee (USD) — Under Threshold</label>
+            <input type="number" id="s-gas-fee-low" placeholder="e.g. 100" min="0" step="1" />
+            <span class="modal-hint" style="margin-top: 4px;">Applied when requested amount is below threshold (e.g. $15,000 = $100 fee)</span>
+          </div>
+          <div class="field">
+            <label>Tier Threshold Amount (USD)</label>
+            <input type="number" id="s-gas-fee-threshold" placeholder="e.g. 20000" min="0" step="100" />
+            <span class="modal-hint" style="margin-top: 4px;">Amounts from this value upward trigger Tier 2 (e.g. $20,000)</span>
+          </div>
+          <div class="field">
+            <label>Tier 2 Gas Fee (USD) — Threshold &amp; Above</label>
+            <input type="number" id="s-gas-fee-high" placeholder="e.g. 200" min="0" step="1" />
+            <span class="modal-hint" style="margin-top: 4px;">Applied when requested amount is at or above threshold (e.g. $20,000+ = $200 fee)</span>
           </div>
         </div>
       </div>
@@ -233,6 +244,6 @@
   </div>
 </div>
 
-<script src="app.js?v=2.2.0"></script>
+<script src="app.js?v=2.2.1"></script>
 </body>
 </html>
