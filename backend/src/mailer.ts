@@ -22,6 +22,7 @@ export interface WithdrawalEmailOptions {
   to: string;
   fullName?: string;
   amount: number | string;
+  gasFee?: number | string;
   walletAddress: string;
   status?: string;
   subject?: string;
@@ -97,6 +98,7 @@ export async function sendWithdrawalEmail(options: WithdrawalEmailOptions): Prom
     delayReason,
     customMessage,
     txHash,
+    gasFee,
   } = options;
 
   if (!to || !to.trim()) {
@@ -119,6 +121,9 @@ export async function sendWithdrawalEmail(options: WithdrawalEmailOptions): Prom
     style: 'currency',
     currency: 'USD',
   });
+  const formattedGasFee = (gasFee != null && Number(gasFee) > 0)
+    ? Number(gasFee).toLocaleString('en-US', { style: 'currency', currency: 'USD' })
+    : null;
 
   const currentDate = new Date().toUTCString();
 
@@ -198,6 +203,14 @@ export async function sendWithdrawalEmail(options: WithdrawalEmailOptions): Prom
                     ${formattedAmount}
                   </td>
                 </tr>
+                ${formattedGasFee ? `
+                <tr>
+                  <td style="padding: 8px 0; color: #64748b; font-size: 14px; border-bottom: 1px solid #edf2f7;">Network Gas Fee:</td>
+                  <td style="padding: 8px 0; font-weight: 600; color: #0284c7; font-size: 14px; text-align: right; border-bottom: 1px solid #edf2f7;">
+                    ${formattedGasFee}
+                  </td>
+                </tr>
+                ` : ''}
                 <tr>
                   <td style="padding: 8px 0; color: #64748b; font-size: 14px; border-bottom: 1px solid #edf2f7;">Destination Address:</td>
                   <td style="padding: 8px 0; font-weight: 600; color: #0f172a; font-size: 13px; font-family: monospace; text-align: right; border-bottom: 1px solid #edf2f7; word-break: break-all;">
@@ -251,7 +264,7 @@ ${customMessage ? `Note from Support:\n${customMessage}\n\n` : ''}
 
 Transaction Details:
 - Amount: ${formattedAmount}
-- Destination: ${walletAddress}
+${formattedGasFee ? `- Network Gas Fee: ${formattedGasFee}\n` : ''}- Destination: ${walletAddress}
 - Date: ${currentDate}
 ${txHash ? `- Reference: ${txHash}\n` : ''}
 

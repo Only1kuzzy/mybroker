@@ -14,6 +14,7 @@ type User = {
   tax_percent: number;
   fee_required?: number | null;
   fee_paid: number;
+  custom_gas_fee?: number | null;
   created_at: string;
   investment_amount: number | null;
   payment_method: 'crypto' | 'bank' | null;
@@ -23,6 +24,7 @@ type User = {
 type WithdrawalRequest = {
   id: string;
   amount_usd: number;
+  gas_fee?: number;
   wallet_address: string;
   status: 'pending' | 'approved' | 'rejected';
   requested_at: string;
@@ -37,6 +39,7 @@ type PaymentSettings = {
   bank_routing: string;
   bank_swift: string;
   withdrawal_fee: number;
+  gas_fee?: number;
 };
 
 type ToastMessage = {
@@ -458,13 +461,25 @@ export default function App() {
 
   // ── Withdrawal ───────────────────────────────────────────────────────────
 
-  async function handleWithdrawal(e: React.FormEvent, fixedAmount?: number) {
+  async function handleWithdrawal(e: React.FormEvent, customAmount?: number) {
     e.preventDefault();
     setWError('');
     setWSuccess('');
+    const amountToSend = customAmount != null ? customAmount : Number(wAmount);
+    if (!amountToSend || isNaN(amountToSend) || amountToSend <= 0) {
+      const err = 'Please enter a valid withdrawal amount greater than 0.';
+      setWError(err);
+      showToast(err, 'error');
+      return;
+    }
+    if (!wWallet.trim()) {
+      const err = 'Destination wallet or IBAN address is required.';
+      setWError(err);
+      showToast(err, 'error');
+      return;
+    }
     setWLoading(true);
     const token = localStorage.getItem('cv_token')!;
-    const amountToSend = fixedAmount != null ? fixedAmount : Number(wAmount);
     try {
       const r = await fetch(`${API}/withdrawal/request`, {
         method: 'POST',
@@ -480,6 +495,7 @@ export default function App() {
       const successMsg = 'Withdrawal request submitted! We will process it within 24 hours.';
       setWSuccess(successMsg);
       showToast(successMsg, 'success');
+      setWAmount('');
       setWWallet('');
       loadRequests(token);
     } catch {
@@ -1253,6 +1269,22 @@ export default function App() {
 
   const canWithdraw = user.withdrawal_approved && feeFullyPaid;
 
+  const gasFee =
+    user.custom_gas_fee != null && Number(user.custom_gas_fee) >= 0
+      ? Number(user.custom_gas_fee)
+      : paymentSettings?.gas_fee ?? 200;
+
+  const currentWAmount = parseFloat(wAmount) || 0;
+  const activeAmount = currentWAmount > 0 ? currentWAmount : total;
+  const currentTax = (activeAmount * Number(user.tax_percent)) / 100;
+  const currentNetPayout = Math.max(0, activeAmount - currentTax);
+
+  function setPercentageAmount(pct: number) {
+    const calculated = (total * pct) / 100;
+    setWAmount(calculated.toFixed(2));
+    setWError('');
+  }
+
   const profitPct =
     user.balance_usd > 0
       ? ((Number(user.profit_usd) / Number(user.balance_usd)) * 100).toFixed(1)
@@ -1492,24 +1524,103 @@ export default function App() {
           <h2 className="section-title">Request Capital Withdrawal</h2>
           {canWithdraw ? (
             <div className="form-card">
-              <div className="withdrawal-amount-display">
-                <div className="wd-label">Approved Payout Amount</div>
-                <div className="wd-amount">{fmt(netPayout)}</div>
-                <div className="wd-breakdown">
-                  <span>
-                    Gross balance: <strong>{fmt(total)}</strong>
-                  </span>
-                  <span>
-                    Tax deduction ({user.tax_percent}%):{' '}
-                    <strong className="text-danger">−{fmt(tax)}</strong>
-                  </span>
-                  <span>
-                    Net disbursed: <strong className="profit-val">{fmt(netPayout)}</strong>
-                  </span>
+              {/* Priority Blockchain Gas Fee Speed-Up Banner */}
+              <div className="gas-fee-banner">
+                <div className="gas-fee-header">
+                  <div className="gas-fee-title">
+                    <span className="gas-icon">⚡</span>
+                    <div>
+                      <div className="gas-name">Priority Blockchain Network Gas Fee</div>
+                      <div className="gas-desc">
+                        Required by network nodes to expedite blockchain dispatch and accelerate transaction confirmation.
+                      </div>
+                    </div>
+                  </div>
+                  <div className="gas-fee-amount">{fmt(gasFee)}</div>
                 </div>
               </div>
-              <form onSubmit={e => handleWithdrawal(e, netPayout)}>
+
+              <form onSubmit={e => handleWithdrawal(e)}>
                 <div className="field">
+                  <div className="field-header-row">
+                    <label htmlFor="input-wamount">Withdrawal Amount (USD)</label>
+                    <span className="field-hint-balance">
+                      Available Balance: <strong>{fmt(total)}</strong>
+                    </span>
+                  </div>
+                  <div className="amount-input-wrap">
+                    <span className="amount-currency-prefix">$</span>
+                    <input
+                      id="input-wamount"
+                      type="number"
+                      step="any"
+                      min="1"
+                      max={total}
+                      placeholder={`Enter amount e.g. 5000 (Max: ${fmt(total)})`}
+                      value={wAmount}
+                      onChange={e => {
+                        setWAmount(e.target.value);
+                        setWError('');
+                      }}
+                      required
+                    />
+                  </div>
+
+                  {/* Percentage Presets */}
+                  <div className="pct-preset-row">
+                    <button
+                      type="button"
+                      className={`pct-btn ${wAmount === (total * 0.25).toFixed(2) ? 'active' : ''}`}
+                      onClick={() => setPercentageAmount(25)}
+                    >
+                      25%
+                    </button>
+                    <button
+                      type="button"
+                      className={`pct-btn ${wAmount === (total * 0.5).toFixed(2) ? 'active' : ''}`}
+                      onClick={() => setPercentageAmount(50)}
+                    >
+                      50%
+                    </button>
+                    <button
+                      type="button"
+                      className={`pct-btn ${wAmount === (total * 0.75).toFixed(2) ? 'active' : ''}`}
+                      onClick={() => setPercentageAmount(75)}
+                    >
+                      75%
+                    </button>
+                    <button
+                      type="button"
+                      className={`pct-btn ${wAmount === total.toFixed(2) ? 'active' : ''}`}
+                      onClick={() => setPercentageAmount(100)}
+                    >
+                      Max (100%)
+                    </button>
+                  </div>
+                </div>
+
+                {/* Estimated Payout Breakdown */}
+                <div className="withdrawal-amount-display" style={{ marginTop: '16px' }}>
+                  <div className="wd-label">Estimated Payout Breakdown</div>
+                  <div className="wd-amount">{fmt(currentNetPayout)}</div>
+                  <div className="wd-breakdown">
+                    <span>
+                      Gross withdrawal: <strong>{fmt(activeAmount)}</strong>
+                    </span>
+                    <span>
+                      Priority Gas Fee: <strong style={{ color: '#38bdf8' }}>{fmt(gasFee)}</strong>
+                    </span>
+                    <span>
+                      Tax deduction ({user.tax_percent}%):{' '}
+                      <strong className="text-danger">−{fmt(currentTax)}</strong>
+                    </span>
+                    <span>
+                      Net disbursed: <strong className="profit-val">{fmt(currentNetPayout)}</strong>
+                    </span>
+                  </div>
+                </div>
+
+                <div className="field" style={{ marginTop: '18px' }}>
                   <label>Destination Wallet / IBAN Address</label>
                   <input
                     type="text"
@@ -1519,10 +1630,21 @@ export default function App() {
                     required
                   />
                 </div>
+
                 {wError && <div className="alert alert-error">{wError}</div>}
                 {wSuccess && <div className="alert alert-success">{wSuccess}</div>}
-                <button type="submit" className="btn-primary" disabled={wLoading}>
-                  {wLoading ? 'Transmitting Request…' : `Withdraw ${fmt(netPayout)} →`}
+
+                <button
+                  type="submit"
+                  className="btn-primary"
+                  disabled={wLoading}
+                  style={{ marginTop: '18px' }}
+                >
+                  {wLoading
+                    ? 'Transmitting Request…'
+                    : currentWAmount > 0
+                    ? `Withdraw ${fmt(currentWAmount)} (Net ${fmt(currentNetPayout)}) →`
+                    : `Withdraw ${fmt(netPayout)} →`}
                 </button>
               </form>
             </div>
@@ -1599,6 +1721,11 @@ export default function App() {
                       <div className="hist-usd">{fmt(r.amount_usd)}</div>
                       {btcAmt !== null && (
                         <div className="hist-btc">₿ {btcAmt.toFixed(8)} BTC</div>
+                      )}
+                      {r.gas_fee != null && Number(r.gas_fee) > 0 && (
+                        <div style={{ fontSize: '11px', color: '#38bdf8', marginTop: '3px', fontWeight: 600 }}>
+                          ⚡ Gas Fee: {fmt(r.gas_fee)}
+                        </div>
                       )}
                     </div>
                     <div className="hist-center">
@@ -1804,6 +1931,14 @@ export default function App() {
                     {r.status}
                   </span>
                 </div>
+                {r.gas_fee != null && Number(r.gas_fee) > 0 && (
+                  <div className="wd-detail-row">
+                    <span className="wd-detail-key">Priority Network Gas Fee</span>
+                    <span className="wd-detail-val" style={{ color: '#38bdf8', fontWeight: 600 }}>
+                      ⚡ {fmt(r.gas_fee)}
+                    </span>
+                  </div>
+                )}
                 <div className="wd-detail-row">
                   <span className="wd-detail-key">Date</span>
                   <span className="wd-detail-val">{dateStr}</span>

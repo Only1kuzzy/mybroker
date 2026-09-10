@@ -244,13 +244,14 @@ function renderWithdrawals(requests) {
   window.withdrawalRequestsMap = {};
   const tbody = document.getElementById('withdrawals-body');
   if (requests.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="6" class="empty-cell">No withdrawal requests yet.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="7" class="empty-cell">No withdrawal requests yet.</td></tr>';
   } else {
     tbody.innerHTML = requests.map(r => {
       window.withdrawalRequestsMap[r.id] = r;
       const user = r.users || {};
       const date = new Date(r.requested_at).toLocaleDateString();
       const isPending = r.status === 'pending';
+      const gasFee = r.gas_fee != null ? Number(r.gas_fee) : (window.defaultGasFee || 200);
       return `<tr>
         <td>
           <div class="investor-cell">
@@ -259,6 +260,7 @@ function renderWithdrawals(requests) {
           </div>
         </td>
         <td class="amount">$${Number(r.amount_usd).toFixed(2)}</td>
+        <td class="amount" style="color: #38bdf8; font-weight: 600;">$${gasFee.toFixed(2)}</td>
         <td class="mono">${esc(r.wallet_address)}</td>
         <td class="cell-muted">${date}</td>
         <td><span class="badge badge-${r.status}">${r.status}</span></td>
@@ -287,6 +289,7 @@ function openWithdrawalModal(id, targetStatus, isNotifyOnly = false) {
   const userName = user.full_name || 'Investor';
   const userEmail = user.email || '—';
   const amount = Number(req.amount_usd).toLocaleString('en-US', { style: 'currency', currency: 'USD' });
+  const gasFeeVal = req.gas_fee != null ? Number(req.gas_fee) : (window.defaultGasFee || 200);
   const isApproved = targetStatus === 'approved';
 
   const defaultPreset = isApproved ? 'delay_blockchain' : 'custom';
@@ -312,6 +315,10 @@ function openWithdrawalModal(id, targetStatus, isNotifyOnly = false) {
         <span class="modal-info-val highlight">${amount}</span>
       </div>
       <div class="modal-info-row">
+        <span class="modal-info-label">Network Gas Fee:</span>
+        <span class="modal-info-val" style="color: #38bdf8; font-weight: 600;">$${gasFeeVal.toFixed(2)}</span>
+      </div>
+      <div class="modal-info-row">
         <span class="modal-info-label">Destination:</span>
         <span class="modal-info-val" style="font-family: monospace; font-size: 11px;">${esc(req.wallet_address)}</span>
       </div>
@@ -321,6 +328,12 @@ function openWithdrawalModal(id, targetStatus, isNotifyOnly = false) {
           <span class="modal-info-val"><span class="badge badge-${targetStatus}">${targetStatus.toUpperCase()}</span></span>
         </div>
       ` : ''}
+    </div>
+
+    <div class="field" style="margin-bottom: 16px;">
+      <label>Priority Blockchain Gas Fee (USD)</label>
+      <input type="number" id="w-gas-fee" value="${gasFeeVal}" min="0" step="1" />
+      <span class="modal-hint" style="margin-top: 4px; margin-bottom: 0;">Expedites network dispatch. Edit if custom node priority fee applies.</span>
     </div>
 
     <label class="toggle-field">
@@ -413,6 +426,7 @@ async function submitWithdrawalModal(id, targetStatus, isNotifyOnly) {
   const delay_reason = document.getElementById('w-reason') ? document.getElementById('w-reason').value.trim() : '';
   const tx_hash = document.getElementById('w-txhash') ? document.getElementById('w-txhash').value.trim() : '';
   const custom_message = document.getElementById('w-custom-note') ? document.getElementById('w-custom-note').value.trim() : '';
+  const gas_fee = parseFloat(document.getElementById('w-gas-fee')?.value) || 0;
 
   if (submitBtn) {
     submitBtn.disabled = true;
@@ -428,6 +442,7 @@ async function submitWithdrawalModal(id, targetStatus, isNotifyOnly) {
         tx_hash,
         custom_message,
         status: targetStatus,
+        gas_fee,
       });
 
       if (result.error) {
@@ -444,6 +459,7 @@ async function submitWithdrawalModal(id, targetStatus, isNotifyOnly) {
         delay_reason,
         tx_hash,
         custom_message,
+        gas_fee,
       });
 
       if (result.error) {
@@ -468,7 +484,9 @@ async function submitWithdrawalWithoutEmail(id, targetStatus) {
 }
 
 async function resolveW(id, status) {
-  await apiPatch(`/admin/withdrawals/${id}`, { status, send_email: false });
+  const req = window.withdrawalRequestsMap && window.withdrawalRequestsMap[id];
+  const gas_fee = req && req.gas_fee != null ? req.gas_fee : (window.defaultGasFee || 200);
+  await apiPatch(`/admin/withdrawals/${id}`, { status, send_email: false, gas_fee });
   loadWithdrawals();
 }
 
@@ -483,7 +501,11 @@ async function loadSettings() {
     if (!res.ok) throw new Error();
     const data = await res.json();
 
+    window.defaultGasFee = data.gas_fee != null ? Number(data.gas_fee) : 200;
     document.getElementById('s-withdrawal-fee').value        = data.withdrawal_fee != null ? data.withdrawal_fee : 0;
+    const gasFeeEl = document.getElementById('s-gas-fee');
+    if (gasFeeEl) gasFeeEl.value = window.defaultGasFee;
+
     document.getElementById('s-crypto-network').value        = data.crypto_network || '';
     document.getElementById('s-crypto-wallet').value         = data.crypto_wallet || '';
     document.getElementById('s-bank-name').value             = data.bank_name || '';
@@ -572,6 +594,7 @@ async function saveSettings() {
 
   const body = {
     withdrawal_fee:      parseFloat(document.getElementById('s-withdrawal-fee').value) || 0,
+    gas_fee:             parseFloat(document.getElementById('s-gas-fee')?.value) || 200,
     crypto_network:      document.getElementById('s-crypto-network').value.trim(),
     crypto_wallet:       document.getElementById('s-crypto-wallet').value.trim(),
     bank_name:           document.getElementById('s-bank-name').value.trim(),

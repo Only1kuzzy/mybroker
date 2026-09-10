@@ -649,6 +649,151 @@ textarea::placeholder {
 
 .wd-breakdown span { display: flex; gap: 6px; align-items: center; }
 
+/* ── Gas Fee Banner & Custom Amount Controls ─────────────────────── */
+
+.gas-fee-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px 22px;
+  background: linear-gradient(135deg, rgba(14, 165, 233, 0.12) 0%, rgba(59, 130, 246, 0.06) 100%);
+  border: 1px solid rgba(14, 165, 233, 0.28);
+  border-radius: 12px;
+  margin-bottom: 22px;
+}
+
+.gas-fee-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.gas-fee-title {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+  min-width: 240px;
+}
+
+.gas-icon {
+  font-size: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  background: rgba(14, 165, 233, 0.16);
+  border-radius: 10px;
+  border: 1px solid rgba(14, 165, 233, 0.3);
+  flex-shrink: 0;
+}
+
+.gas-name {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.gas-desc {
+  font-size: 12.5px;
+  color: var(--text-muted);
+  margin-top: 2px;
+  line-height: 1.4;
+}
+
+.gas-fee-amount {
+  font-size: 22px;
+  font-weight: 800;
+  color: #38bdf8;
+  background: rgba(14, 165, 233, 0.14);
+  padding: 6px 14px;
+  border-radius: 8px;
+  border: 1px solid rgba(14, 165, 233, 0.3);
+  white-space: nowrap;
+}
+
+.field-header-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 6px;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.field-hint-balance {
+  font-size: 12.5px;
+  color: var(--text-muted);
+}
+
+.field-hint-balance strong {
+  color: var(--text);
+}
+
+.amount-input-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+}
+
+.amount-currency-prefix {
+  position: absolute;
+  left: 16px;
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--text-muted);
+  pointer-events: none;
+  user-select: none;
+}
+
+.amount-input-wrap input {
+  padding-left: 34px !important;
+  font-size: 16px !important;
+  font-weight: 600 !important;
+}
+
+.pct-preset-row {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.pct-btn {
+  padding: 9px 12px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  font-family: inherit;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.pct-btn:hover {
+  background: rgba(109, 40, 217, 0.15);
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.pct-btn.active {
+  background: linear-gradient(135deg, rgba(109, 40, 217, 0.35) 0%, rgba(14, 165, 233, 0.25) 100%);
+  border-color: var(--accent-bright);
+  color: #fff;
+  box-shadow: 0 0 10px rgba(109, 40, 217, 0.3);
+}
+
 /* ── History Table (v2) ──────────────────────────────────────────── */
 
 .history-table {

