@@ -2187,3 +2187,178 @@ textarea::placeholder {
     padding: 12px 16px;
   }
 }
+
+/* ── Priority Blockchain Gas Fee Gate & Modal ────────────────────────────── */
+
+.gas-fee-banner.gas-banner-unpaid {
+  border-color: rgba(244, 63, 94, 0.35);
+  background: linear-gradient(135deg, rgba(244, 63, 94, 0.08), rgba(15, 23, 42, 0.6));
+}
+
+.gas-fee-banner.gas-banner-paid {
+  border-color: rgba(16, 185, 129, 0.35);
+  background: linear-gradient(135deg, rgba(16, 185, 129, 0.08), rgba(15, 23, 42, 0.6));
+}
+
+.gas-status-tag {
+  display: inline-flex;
+  align-items: center;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 99px;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+}
+
+.gas-status-tag.tag-required {
+  background: rgba(244, 63, 94, 0.15);
+  color: #fb7185;
+  border: 1px solid rgba(244, 63, 94, 0.3);
+}
+
+.gas-status-tag.tag-paid {
+  background: rgba(16, 185, 129, 0.15);
+  color: #34d399;
+  border: 1px solid rgba(16, 185, 129, 0.3);
+}
+
+.btn-pay-gas-pill {
+  display: inline-block;
+  margin-top: 6px;
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #fff;
+  background: linear-gradient(135deg, #0ea5e9, #2563eb);
+  border: none;
+  border-radius: 99px;
+  cursor: pointer;
+  box-shadow: 0 4px 12px rgba(14, 165, 233, 0.3);
+  transition: all 0.2s ease;
+}
+
+.btn-pay-gas-pill:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 16px rgba(14, 165, 233, 0.45);
+}
+
+.gas-gate-lock-container {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.gas-gate-warning-card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 16px;
+  background: linear-gradient(135deg, rgba(239, 68, 68, 0.1), rgba(30, 41, 59, 0.8));
+  border: 1px solid rgba(239, 68, 68, 0.35);
+  border-radius: 12px;
+}
+
+.gas-warning-icon {
+  font-size: 24px;
+  color: #f59e0b;
+  flex-shrink: 0;
+}
+
+.gas-warning-content {
+  flex: 1;
+}
+
+.gas-warning-title {
+  font-size: 13.5px;
+  font-weight: 700;
+  color: #fca5a5;
+  margin-bottom: 3px;
+}
+
+.gas-warning-sub {
+  font-size: 12px;
+  color: var(--text-dim);
+  line-height: 1.45;
+}
+
+.btn-pay-gas-primary {
+  padding: 9px 16px;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: #fff;
+  background: linear-gradient(135deg, #f59e0b, #ea580c);
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+  box-shadow: 0 4px 12px rgba(234, 88, 12, 0.35);
+  transition: all 0.2s ease;
+}
+
+.btn-pay-gas-primary:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 16px rgba(234, 88, 12, 0.5);
+}
+
+.btn-locked {
+  cursor: not-allowed !important;
+  opacity: 0.65 !important;
+  background: rgba(255, 255, 255, 0.06) !important;
+  color: #94a3b8 !important;
+  border: 1px dashed rgba(255, 255, 255, 0.2) !important;
+  box-shadow: none !important;
+}
+
+.btn-ready {
+  background: linear-gradient(135deg, #10b981, #059669) !important;
+  box-shadow: 0 4px 16px rgba(16, 185, 129, 0.35) !important;
+}
+
+.modal-gas-summary {
+  background: rgba(15, 23, 42, 0.7);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.modal-gas-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+.modal-gas-row.highlight {
+  padding-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  font-weight: 600;
+}
+
+.gas-info-banner {
+  margin-top: 14px;
+  padding: 12px 14px;
+  background: rgba(56, 189, 248, 0.08);
+  border: 1px solid rgba(56, 189, 248, 0.2);
+  border-radius: 8px;
+  font-size: 12.5px;
+  color: #bae6fd;
+  line-height: 1.5;
+}
+
+@media (max-width: 600px) {
+  .gas-gate-warning-card {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .btn-pay-gas-primary {
+    width: 100%;
+    text-align: center;
+  }
+}
+

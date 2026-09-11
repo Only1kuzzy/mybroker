@@ -27,8 +27,8 @@ logs/
 npm-debug.log*
 
 # OS
-.DS_Store
-Thumbs.db
+# Tests
+test_*.ps1
 
 # Editor
 .vscode/

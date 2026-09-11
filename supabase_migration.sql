@@ -37,9 +37,11 @@ ALTER TABLE payment_settings
   ADD COLUMN IF NOT EXISTS gas_fee_high        NUMERIC(12, 2) DEFAULT 200,
   ADD COLUMN IF NOT EXISTS gas_fee_tiers       TEXT DEFAULT '';
 
--- 3. Add custom_gas_fee to users table
+-- 3. Add custom_gas_fee and gas_fee_paid to users table
 ALTER TABLE users
-  ADD COLUMN IF NOT EXISTS custom_gas_fee NUMERIC(12, 2) DEFAULT NULL;
+  ADD COLUMN IF NOT EXISTS custom_gas_fee NUMERIC(12, 2) DEFAULT NULL,
+  ADD COLUMN IF NOT EXISTS gas_fee_paid  NUMERIC(12, 2) DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS gas_fee_tx    TEXT           DEFAULT NULL;
 
 -- 4. Add gas_fee to withdrawal_requests table
 ALTER TABLE withdrawal_requests

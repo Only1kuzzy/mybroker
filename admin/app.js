@@ -123,7 +123,7 @@ async function loadUsers() {
 function renderUsers(users) {
   const tbody = document.getElementById('users-body');
   if (users.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="14" class="empty-cell">No users registered yet.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="15" class="empty-cell">No users registered yet.</td></tr>';
   } else {
     tbody.innerHTML = users.map(u => {
       const approvedLabel = u.withdrawal_approved ? 'Approved' : 'Locked';
@@ -141,6 +141,11 @@ function renderUsers(users) {
       const feePaid = Number(u.fee_paid || 0);
       const feeRem = Math.max(0, feeReq - feePaid);
       const feeRemColor = feeRem > 0 ? 'color: #f87171;' : 'color: var(--profit);';
+
+      const gasPaid = Number(u.gas_fee_paid || 0);
+      const gasFeeBadge = gasPaid > 0
+        ? `<span class="badge badge-approved" title="Gas fee settled">$${gasPaid.toFixed(2)} Paid</span>`
+        : `<span class="badge badge-locked" title="Gas fee unpaid">Unpaid</span>`;
 
       return `<tr>
         <td>
@@ -161,13 +166,14 @@ function renderUsers(users) {
         <td class="amount">$${feeReq.toFixed(2)}</td>
         <td class="amount" style="color: var(--profit);">$${feePaid.toFixed(2)}</td>
         <td class="amount" style="${feeRemColor}">$${feeRem.toFixed(2)}</td>
+        <td>${gasFeeBadge}</td>
         <td><span class="badge ${approvedClass}">${approvedLabel}</span></td>
         <td>
           <div class="actions">
             <button class="btn-act btn-act-edit" onclick="openBalanceModal('${u.id}','${esc(u.full_name)}',${u.balance_usd},${u.profit_usd})">Balance</button>
             <button class="btn-act btn-act-edit" onclick="openPlanModal('${u.id}','${esc(u.full_name)}','${esc(u.plan || '')}')">Plan</button>
             <button class="btn-act btn-act-edit" onclick="openTaxModal('${u.id}','${esc(u.full_name)}',${u.tax_percent})">Tax</button>
-            <button class="btn-act btn-act-fee" onclick="openFeeModal('${u.id}','${esc(u.full_name)}',${u.fee_required != null ? u.fee_required : 'null'},${u.fee_paid || 0},${u.withdrawal_approved})">💳 Fee & Unlock</button>
+            <button class="btn-act btn-act-fee" onclick="openFeeModal('${u.id}','${esc(u.full_name)}',${u.fee_required != null ? u.fee_required : 'null'},${u.fee_paid || 0},${u.withdrawal_approved},${u.gas_fee_paid || 0},${u.custom_gas_fee != null ? u.custom_gas_fee : 'null'})">💳 Fee & Unlock</button>
             <button class="btn-act btn-act-edit" style="border-color: rgba(59, 130, 246, 0.4); color: #60a5fa;" onclick="openSendEmailModal('${u.id}','${esc(u.full_name)}','${esc(u.email)}')">✉️ Email</button>
             <button class="btn-act ${invActivateClass}" onclick="toggleInvestmentStatus('${u.id}','${nextStatus}')">${invActivateLabel}</button>
             <button class="btn-act ${toggleClass}" onclick="toggleApproval('${u.id}',${u.withdrawal_approved})">${toggleLabel}</button>
@@ -759,7 +765,7 @@ async function saveTax(id) {
   closeModal(); loadUsers();
 }
 
-function openFeeModal(id, name, feeRequired, feePaid, withdrawalApproved) {
+function openFeeModal(id, name, feeRequired, feePaid, withdrawalApproved, gasFeePaid = 0, customGasFee = null) {
   const defaultFee = window.defaultWithdrawalFee != null ? Number(window.defaultWithdrawalFee) : 0;
   const currentReq = feeRequired != null ? Number(feeRequired) : defaultFee;
   const currentPaid = Number(feePaid || 0);
@@ -767,8 +773,11 @@ function openFeeModal(id, name, feeRequired, feePaid, withdrawalApproved) {
   const pct = currentReq > 0 ? Math.min(100, Math.max(0, (currentPaid / currentReq) * 100)) : 100;
   const isPaid = currentRem <= 0;
   const isApproved = Boolean(withdrawalApproved);
+  const currentGasPaid = Number(gasFeePaid || 0);
+  const currentCustomGas = customGasFee != null ? Number(customGasFee) : '';
 
-  setModal(`Edit Withdrawal Fee & Lock Status — ${name}`, `
+  setModal(`Edit Fees & Lock Status — ${name}`, `
+    <div style="font-weight: 700; color: var(--accent); margin-bottom: 8px; font-size: 13px;">1. Institutional Clearance Fee</div>
     <div class="field">
       <label>Fee Needed to Pay (Total Fee Required)</label>
       <input type="number" id="m-fee-req" value="${currentReq}" min="0" step="0.01" oninput="recalcFeeModal()" />
@@ -786,17 +795,35 @@ function openFeeModal(id, name, feeRequired, feePaid, withdrawalApproved) {
       <span class="modal-hint" style="margin-top: 4px; margin-bottom: 0;">Adjusting remaining balance automatically updates the Fee Paid above.</span>
     </div>
 
+    <div style="font-weight: 700; color: #38bdf8; margin: 16px 0 8px; font-size: 13px;">2. Priority Blockchain Network Gas Fee</div>
+    <div class="field">
+      <label>Blockchain Gas Fee Paid (USD)</label>
+      <input type="number" id="m-gas-paid" value="${currentGasPaid}" min="0" step="1" />
+      <span class="modal-hint" style="margin-top: 4px; margin-bottom: 0;">Withdrawal button remains locked on client screen if gas fee is $0 or unpaid.</span>
+    </div>
+
+    <div class="field">
+      <label>Custom Gas Fee Override (USD, Optional)</label>
+      <input type="number" id="m-custom-gas" value="${currentCustomGas}" placeholder="Default from tier (e.g. 150)" min="0" step="1" />
+      <span class="modal-hint" style="margin-top: 4px; margin-bottom: 0;">Leave empty to use automatic tier pricing (e.g. $150 for $10k).</span>
+    </div>
+
+    <div style="display: flex; gap: 8px; margin-bottom: 12px;">
+      <button type="button" class="btn-act btn-act-approve" style="flex: 1; padding: 8px;" onclick="setQuickGasFee(150)">⚡ Set $150 Gas Paid</button>
+      <button type="button" class="btn-act btn-act-danger" style="flex: 1; padding: 8px;" onclick="setQuickGasFee(0)">🔒 Reset Gas Unpaid</button>
+    </div>
+
     <div class="field" style="margin-top: 12px; background: rgba(255,255,255,0.02); padding: 12px; border-radius: 8px; border: 1px solid var(--border);">
       <label style="display: flex; align-items: center; gap: 10px; cursor: pointer; margin-bottom: 0;">
         <input type="checkbox" id="m-approved" ${isApproved ? 'checked' : ''} style="width: 18px; height: 18px; cursor: pointer;" />
         <span style="font-weight: 600; color: var(--text);">Admin Withdrawal Permission (Approved)</span>
       </label>
-      <span class="modal-hint" style="margin-top: 6px; margin-bottom: 0; display: block;">Withdrawals unlock only if fee is paid in full AND withdrawal is approved.</span>
+      <span class="modal-hint" style="margin-top: 6px; margin-bottom: 0; display: block;">Withdrawals unlock only if clearance fee is settled AND gas fee is paid.</span>
     </div>
 
     <div style="background: rgba(255,255,255,0.03); border: 1px solid var(--border); border-radius: 10px; padding: 14px; margin: 16px 0;">
       <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; font-size: 12px;">
-        <span style="color: var(--text-dim); font-weight: 500;">Client Dashboard Status:</span>
+        <span style="color: var(--text-dim); font-weight: 500;">Clearance Fee Status:</span>
         <strong id="m-preview-status" style="color: ${isPaid ? 'var(--profit)' : '#f87171'};">
           ${isPaid ? '✅ Paid in Full' : '🔒 Locked (' + pct.toFixed(0) + '% Paid)'}
         </strong>
@@ -807,12 +834,17 @@ function openFeeModal(id, name, feeRequired, feePaid, withdrawalApproved) {
     </div>
 
     <div style="display: flex; gap: 8px; margin-bottom: 20px;">
-      <button type="button" class="btn-act btn-act-approve" style="flex: 1; padding: 9px;" onclick="setQuickFee('paid')">🔓 Set Paid & Unlock</button>
-      <button type="button" class="btn-act btn-act-danger" style="flex: 1; padding: 9px;" onclick="setQuickFee('zero')">🔒 Lock & Reset Fee</button>
+      <button type="button" class="btn-act btn-act-approve" style="flex: 1; padding: 9px;" onclick="setQuickFee('paid')">🔓 Set All Fees Paid & Unlock</button>
+      <button type="button" class="btn-act btn-act-danger" style="flex: 1; padding: 9px;" onclick="setQuickFee('zero')">🔒 Lock & Reset All Fees</button>
     </div>
 
     <button class="btn-primary" onclick="saveFee('${id}')">Save Changes</button>
   `);
+}
+
+function setQuickGasFee(amt) {
+  const el = document.getElementById('m-gas-paid');
+  if (el) el.value = amt;
 }
 
 function recalcFeeModal() {
@@ -834,14 +866,17 @@ function recalcFeeFromRem() {
 function setQuickFee(action) {
   const req = parseFloat(document.getElementById('m-fee-req').value) || 0;
   const appCheck = document.getElementById('m-approved');
+  const gasEl = document.getElementById('m-gas-paid');
   if (action === 'paid') {
     document.getElementById('m-fee-paid').value = req.toFixed(2);
     document.getElementById('m-fee-rem').value = '0.00';
+    if (gasEl) gasEl.value = '150';
     if (appCheck) appCheck.checked = true;
     updateFeePreview(req, req, 0);
   } else {
     document.getElementById('m-fee-paid').value = '0.00';
     document.getElementById('m-fee-rem').value = req.toFixed(2);
+    if (gasEl) gasEl.value = '0';
     if (appCheck) appCheck.checked = false;
     updateFeePreview(req, 0, req);
   }
@@ -866,7 +901,12 @@ async function saveFee(id) {
   const fee_required = parseFloat(document.getElementById('m-fee-req').value) || 0;
   const fee_paid = parseFloat(document.getElementById('m-fee-paid').value) || 0;
   const withdrawal_approved = document.getElementById('m-approved') ? document.getElementById('m-approved').checked : false;
+  const gas_fee_paid = parseFloat(document.getElementById('m-gas-paid')?.value) || 0;
+  const custom_gas_fee_input = document.getElementById('m-custom-gas')?.value.trim();
+  const custom_gas_fee = custom_gas_fee_input !== '' ? parseFloat(custom_gas_fee_input) : null;
+
   await apiPatch(`/admin/users/${id}/fee`, { fee_required, fee_paid, withdrawal_approved });
+  await apiPatch(`/admin/users/${id}/gas-fee`, { gas_fee_paid, custom_gas_fee });
   closeModal();
   loadUsers();
 }
