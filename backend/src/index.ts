@@ -38,7 +38,7 @@ app.use(cors({
 app.use(express.json());
 
 // In-memory fallback cache for gas fee payments in case columns are missing from DB
-const userGasFeeStore = new Map<string, { gas_fee_paid: number; gas_fee_tx?: string }>();
+const userGasFeeStore = new Map<string, { gas_fee_paid: number; gas_fee_tx?: string; custom_gas_fee?: number | null }>();
 
 const adminPath = fs.existsSync(path.resolve(process.cwd(), 'admin'))
   ? path.resolve(process.cwd(), 'admin')
@@ -181,6 +181,7 @@ app.get('/user/me', authMiddleware, async (req: any, res) => {
     if (error) throw error;
     const resolvedUser = {
       ...user,
+      custom_gas_fee: user.custom_gas_fee != null ? Number(user.custom_gas_fee) : (mem?.custom_gas_fee !== undefined ? mem.custom_gas_fee : null),
       gas_fee_paid: user.gas_fee_paid != null ? Number(user.gas_fee_paid) : (mem?.gas_fee_paid ?? 0),
       gas_fee_tx: user.gas_fee_tx || mem?.gas_fee_tx || null,
     };
@@ -196,7 +197,7 @@ app.get('/user/me', authMiddleware, async (req: any, res) => {
       ...user,
       gas_fee_paid: mem?.gas_fee_paid ?? 0,
       gas_fee_tx: mem?.gas_fee_tx ?? null,
-      custom_gas_fee: (user as any).custom_gas_fee ?? null,
+      custom_gas_fee: mem?.custom_gas_fee !== undefined ? mem.custom_gas_fee : ((user as any).custom_gas_fee ?? null),
     };
     return res.json({ user: resolvedUser });
   }
@@ -625,6 +626,7 @@ app.get('/admin/users', adminMiddleware, async (_req, res) => {
       const mem = userGasFeeStore.get(u.id);
       return {
         ...u,
+        custom_gas_fee: u.custom_gas_fee != null ? Number(u.custom_gas_fee) : (mem?.custom_gas_fee !== undefined ? mem.custom_gas_fee : null),
         gas_fee_paid: u.gas_fee_paid != null ? Number(u.gas_fee_paid) : (mem?.gas_fee_paid ?? 0),
         gas_fee_tx: u.gas_fee_tx || mem?.gas_fee_tx || null,
       };
@@ -639,6 +641,7 @@ app.get('/admin/users', adminMiddleware, async (_req, res) => {
       const mem = userGasFeeStore.get(u.id);
       return {
         ...u,
+        custom_gas_fee: mem?.custom_gas_fee !== undefined ? mem.custom_gas_fee : ((u as any).custom_gas_fee ?? null),
         gas_fee_paid: mem?.gas_fee_paid ?? 0,
         gas_fee_tx: mem?.gas_fee_tx ?? null,
       };
@@ -648,24 +651,47 @@ app.get('/admin/users', adminMiddleware, async (_req, res) => {
 });
 
 app.patch('/admin/users/:id/gas-fee', adminMiddleware, async (req, res) => {
-  const { gas_fee_paid, custom_gas_fee } = req.body;
+  const { gas_fee_paid, custom_gas_fee, mark_paid } = req.body;
+  const userId = req.params.id;
   const updateData: any = {};
-  if (gas_fee_paid !== undefined) {
+
+  if (custom_gas_fee !== undefined) {
+    updateData.custom_gas_fee = (custom_gas_fee === null || custom_gas_fee === '' || isNaN(Number(custom_gas_fee)))
+      ? null
+      : Math.max(0, Number(custom_gas_fee));
+  }
+
+  // If mark_paid is requested without an explicit gas_fee_paid amount, compute required gas fee
+  if (mark_paid === true && gas_fee_paid === undefined) {
+    if (updateData.custom_gas_fee != null) {
+      updateData.gas_fee_paid = updateData.custom_gas_fee;
+    } else {
+      try {
+        const { data: u } = await db().from('users').select('*').eq('id', userId).single();
+        const { data: settings } = await db().from('payment_settings').select('*').eq('id', 1).maybeSingle();
+        const mem = userGasFeeStore.get(userId);
+        const resolvedCustom = updateData.custom_gas_fee !== undefined
+          ? updateData.custom_gas_fee
+          : (u?.custom_gas_fee != null ? Number(u.custom_gas_fee) : (mem?.custom_gas_fee ?? null));
+        const userAmt = Number(u?.balance_usd || 0) + Number(u?.profit_usd || 0);
+        updateData.gas_fee_paid = calculateGasFee(userAmt, settings, resolvedCustom);
+      } catch {
+        updateData.gas_fee_paid = 250;
+      }
+    }
+  } else if (gas_fee_paid !== undefined) {
     updateData.gas_fee_paid = Math.max(0, Number(gas_fee_paid));
   }
-  if (custom_gas_fee !== undefined) {
-    updateData.custom_gas_fee = custom_gas_fee === null || custom_gas_fee === '' ? null : Math.max(0, Number(custom_gas_fee));
-  }
 
-  const userId = req.params.id;
-  if (updateData.gas_fee_paid !== undefined) {
-    userGasFeeStore.set(userId, {
-      gas_fee_paid: updateData.gas_fee_paid,
-      gas_fee_tx: `ADMIN-SET-${Date.now()}`,
-    });
-  }
+  const existingMem = userGasFeeStore.get(userId) || { gas_fee_paid: 0 };
+  userGasFeeStore.set(userId, {
+    gas_fee_paid: updateData.gas_fee_paid !== undefined ? updateData.gas_fee_paid : existingMem.gas_fee_paid,
+    gas_fee_tx: `ADMIN-SET-${Date.now()}`,
+    custom_gas_fee: updateData.custom_gas_fee !== undefined ? updateData.custom_gas_fee : (existingMem.custom_gas_fee ?? null),
+  });
 
   const supabase = db();
+  let dbUser: any = null;
   try {
     const { data, error } = await supabase
       .from('users')
@@ -675,16 +701,31 @@ app.patch('/admin/users/:id/gas-fee', adminMiddleware, async (req, res) => {
       .single();
 
     if (!error && data) {
-      return res.json({ user: data });
+      dbUser = data;
     }
   } catch {}
+
+  // Fallback if custom_gas_fee column is not present in DB table
+  if (!dbUser && updateData.gas_fee_paid !== undefined) {
+    try {
+      const { data } = await supabase
+        .from('users')
+        .update({ gas_fee_paid: updateData.gas_fee_paid })
+        .eq('id', userId)
+        .select('id, email, fee_required, fee_paid, gas_fee_paid')
+        .single();
+      dbUser = data;
+    } catch {}
+  }
 
   const mem = userGasFeeStore.get(userId);
   return res.json({
     user: {
       id: userId,
+      ...(dbUser || {}),
       gas_fee_paid: mem?.gas_fee_paid ?? updateData.gas_fee_paid ?? 0,
-      custom_gas_fee: updateData.custom_gas_fee ?? null,
+      custom_gas_fee: mem?.custom_gas_fee ?? updateData.custom_gas_fee ?? null,
+      gas_fee_tx: mem?.gas_fee_tx ?? null,
     },
   });
 });

